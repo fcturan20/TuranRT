@@ -1,0 +1,9 @@
+cmake_minimum_required (VERSION 3.8)
+set(VCPKG_TARGET_TRIPLET x64-windows)
+set(CMAKE_TOOLCHAIN_FILE "D:/dev/Extras/vcpkg/scripts/buildsystems/vcpkg.cmake")
+include("D:/dev/Extras/vcpkg/scripts/buildsystems/vcpkg.cmake")
+
+project ("TuranVKRT")
+set(CMAKE_CXX_STANDARD 17)
+
+add_subdirectory("src")
