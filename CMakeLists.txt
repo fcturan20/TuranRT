@@ -3,7 +3,7 @@ set(VCPKG_TARGET_TRIPLET x64-windows)
 set(CMAKE_TOOLCHAIN_FILE "D:/dev/Extras/vcpkg/scripts/buildsystems/vcpkg.cmake")
 include("D:/dev/Extras/vcpkg/scripts/buildsystems/vcpkg.cmake")
 
-project ("TuranVKRT")
+project ("TuranRT")
 set(CMAKE_CXX_STANDARD 17)
-
 add_subdirectory("src")
+add_subdirectory("dependencies/TuranLibraries")
