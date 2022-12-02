@@ -2,12 +2,11 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#include <vulkan_backend/imgui_vktgfx.h>
-
-void MainWindow_run(imguiwindow_tgfx* windowdata) {
+void MainWindow_run(void* windowdata) {
 	printf("run");
 }
 void MainWindow::initialize() {
+	/*
 	imguiwindow_tgfx* window = new imguiwindow_tgfx;
 	window->isWindowOpen = true;
 	window->RunWindow = &MainWindow_run;
@@ -15,4 +14,5 @@ void MainWindow::initialize() {
 	window->WindowName = "Main Window";
 	vkimgui::Register_WINDOW(window);
 	printf("Initialized main window");
+	*/
 }

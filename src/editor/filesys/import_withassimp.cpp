@@ -15,11 +15,11 @@ tri_model* file_importer::ImportModel_withAssimp(const char* PATH){
 
 		//Check if scene reading errors!
 		if (!Scene || Scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !Scene->mRootNode) {
-			printer_editor(result_editor::FAIL, ("Failed on Loading Mesh with Assimp; " + std::string(import.GetErrorString())).c_str());
+			//printer_editor(result_editor::FAIL, ("Failed on Loading Mesh with Assimp; " + std::string(import.GetErrorString())).c_str());
 		}
 
 		if (Scene->mNumMeshes == 0) {
-			printer_editor(result_editor::FAIL, "Failed because there is no mesh in loaded scene!");
+			//printer_editor(result_editor::FAIL, "Failed because there is no mesh in loaded scene!");
 		}
 	}
         

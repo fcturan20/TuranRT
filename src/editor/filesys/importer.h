@@ -1,6 +1,5 @@
 #pragma once
 #include <glm/glm.hpp>
-#include <editor/editor_includes.h>
 
 struct tri_mesh {
     unsigned int v_count = 0, i_count = 0;
