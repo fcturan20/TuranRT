@@ -1,0 +1,3 @@
+[submodule "dependencies/TuranLibraries"]
+	path = dependencies/TuranLibraries
+	url = git@github.com:fcturan20/TuranLibraries.git
