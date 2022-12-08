@@ -20,7 +20,7 @@ typedef struct meshManager_rt {
   static rtMesh allocateMesh(uint32_t vertexCount, uint32_t indexCount, void** meshData);
   // Uploads memory block of allocateMesh's meshData to GPU and validates rtMesh
   // All meshData should be ready
-  static void   uploadMesh(rtMesh mesh);
+  static void uploadMesh(rtMesh mesh);
   // Assimp mesh importer: Allocates mesh and uploads it
   static rtMesh createDefaultMesh(aiMesh* mesh);
   static void   frame();

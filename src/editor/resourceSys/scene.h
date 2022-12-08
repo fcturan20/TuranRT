@@ -8,7 +8,7 @@ typedef struct scene_rt* rtScene;
 struct aiNode;
 typedef struct sceneModifier_rt {
   static entityHnd_ecstapi addDefaultEntity(rtScene scene);
-  static void  createEntitiesWithAssimp(aiNode* rootNode);
+  static void              createEntitiesWithAssimp(aiNode* rootNode);
 } rtSceneModifier;
 
 typedef struct sceneManager_rt {

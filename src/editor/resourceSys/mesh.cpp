@@ -26,8 +26,8 @@ struct rtMeshManager_private {
   static bool isMeshValid(void* dataHnd) { return false; }
 };
 rtResourceManagerType rtMeshManager_private::managerType     = {};
-rtGpuMemBlock rtMeshManager_private::gpuVertexBuffer   = {},
-              rtMeshManager_private::gpuIndexBuffer    = {},
+rtGpuMemBlock         rtMeshManager_private::gpuVertexBuffer = {},
+              rtMeshManager_private::gpuIndexBuffer          = {},
               rtMeshManager_private::gpuIndirectBuffer       = {};
 std::vector<rtMesh> rtMeshManager_private::meshes = {}, rtMeshManager_private::uploadQueue = {};
 std::vector<commandBundle_tgfxhnd> rtMeshManager_private::uploadBundleList = {};
@@ -68,8 +68,8 @@ rtMesh meshManager_rt::allocateMesh(uint32_t vertexCount, uint32_t indexCount, v
   mesh->m_indexCount  = indexCount;
 
   uint32_t stagingBufferSize = (vertexCount * sizeof(rtVertex)) + (indexCount * sizeof(uint32_t));
-  mesh->m_stagingBlock       = rtRenderer::allocateMemoryBlock(
-          bufferUsageMask_tgfx_COPYFROM, stagingBufferSize, rtRenderer::UPLOAD);
+  mesh->m_stagingBlock       = rtRenderer::allocateMemoryBlock(bufferUsageMask_tgfx_COPYFROM,
+                                                               stagingBufferSize, rtRenderer::UPLOAD);
 
   // Can't use staging memory, keep it in RAM to upload later
   if (mesh->m_stagingBlock) {
@@ -103,7 +103,6 @@ void meshManager_rt::uploadMesh(rtMesh mesh) {
   renderer->finishCommandBundle(copyBundle, {});
   rtMeshManager_private::uploadBundleList.push_back(copyBundle);
 }
-
 
 rtMesh meshManager_rt::createDefaultMesh(aiMesh* aMesh) {
   void*  meshData = nullptr;

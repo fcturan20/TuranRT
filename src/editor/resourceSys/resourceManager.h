@@ -13,7 +13,7 @@
 
 // Resource types are important because if 2 different plugins uses same file extension, we should
 //  be able to specify which one to use without testing to load with both plugins
-typedef struct resource_rt* rtResource;
+typedef struct resource_rt*            rtResource;
 typedef struct resourceManagerType_rt* rtResourceManagerType;
 typedef struct resourceDesc_rt {
   // Example: C:\dev\firstScene.scene

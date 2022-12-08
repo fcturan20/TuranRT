@@ -9,7 +9,6 @@
 #include "ecs_tapi.h"
 #include "resourceManager.h"
 
-
 struct scene_rt {
   entityTypeHnd_ecstapi          defaultEntityType;
   std::vector<entityHnd_ecstapi> entities;

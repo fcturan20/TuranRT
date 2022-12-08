@@ -33,10 +33,10 @@
 #include "threadingsys_tapi.h"
 #include "tgfx_core.h"
 
-allocator_sys_tapi*            allocatorSys   = {};
-tgfx_core*                     tgfx           = {};
-FILESYS_TAPI_PLUGIN_LOAD_TYPE  filesys        = {};
-PROFILER_TAPI_PLUGIN_LOAD_TYPE profilerSys    = {};
+allocator_sys_tapi*            allocatorSys = {};
+tgfx_core*                     tgfx         = {};
+FILESYS_TAPI_PLUGIN_LOAD_TYPE  filesys      = {};
+PROFILER_TAPI_PLUGIN_LOAD_TYPE profilerSys  = {};
 
 void load_plugins() {
   pluginHnd_ecstapi threadingPlugin = editorECS->loadPlugin("tapi_threadedjobsys.dll");
@@ -64,7 +64,7 @@ void load_plugins() {
     pluginHnd_ecstapi tgfxPlugin = editorECS->loadPlugin("tgfx_core.dll");
     auto              tgfxSys    = ( TGFX_PLUGIN_LOAD_TYPE )editorECS->getSystem(TGFX_PLUGIN_NAME);
     if (tgfxSys) {
-      tgfx           = tgfxSys->api;
+      tgfx = tgfxSys->api;
     }
   }
 }
@@ -152,8 +152,7 @@ void load_systems() {
     // SOURCE_DIR "Content/cube.fbx"
     "D:/Desktop/Meshes/Gun/Handgun_fbx_7.4_binary.fbx", &resourceCount);
 
-
-  int i = 0;
+  int      i        = 0;
   uint64_t duration = {};
   while (++i && i < 1000000) {
     TURAN_PROFILE_SCOPE_MCS(profilerSys->funcs, "presentation", &duration);
@@ -164,8 +163,7 @@ void load_systems() {
     rtRenderer::setActiveFrameCamProps(
       glm::lookAt(camPos, camPos + frontVector, world_up),
       glm::perspective(glm::radians(90.0f), 16.0f / 9.0f, 0.01f, 100.0f));
-    
-    
+
     rtMeshManager::frame();
     rtRenderer::renderFrame();
     tgfx->takeInputs();
