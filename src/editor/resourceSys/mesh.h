@@ -10,6 +10,7 @@ typedef struct vertex_rt {
 
 typedef struct mesh_rt* rtMesh;
 struct aiMesh;
+typedef struct tgfx_commandbundle_obj* commandBundle_tgfxhnd;
 // Create, upload, render & destroy vertex_rt vertex buffers.
 // Rendering is done with instanced indexed indirect.
 typedef struct meshManager_rt {
@@ -23,7 +24,12 @@ typedef struct meshManager_rt {
   static void uploadMesh(rtMesh mesh);
   // Assimp mesh importer: Allocates mesh and uploads it
   static rtMesh createDefaultMesh(aiMesh* mesh);
-  static void   frame();
+  struct renderInfo {
+    rtMesh     mesh;
+    glm::mat4* transform;
+  };
+  static commandBundle_tgfxhnd render(unsigned int count, renderInfo* const infos);
+  static void                  frame();
 
   static void                  initializeManager();
   typedef rtMesh               defaultResourceType;

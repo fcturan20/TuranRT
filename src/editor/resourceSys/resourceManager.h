@@ -36,6 +36,9 @@ typedef struct resourceManager_rt {
   // Should be called from resource managers
   // Desc's loaded resourceHnd has to be valid!
   static rtResource createResource(rtResourceDesc desc);
+  // @param managerType: managerType of the resource is returned, so you can check the resource type
+  // @return resource's handle
+  static void*      getResourceHnd(rtResource resource, rtResourceManagerType& managerType);
 
   typedef bool (*deserializeResourceFnc)(rtResourceDesc* desc);
   typedef bool (*isResourceValidFnc)(void* dataHnd);

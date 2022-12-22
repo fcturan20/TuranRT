@@ -13,8 +13,8 @@
 struct resource_rt {
   std::string filePath;
   bool        isBinary;
-  uint32_t    resourceType;
   void*       resourcePtr;
+  rtResourceManagerType resourceManager;
   // Manager infos isn't used for now
 };
 
@@ -50,6 +50,7 @@ rtResource rtResourceManager::createResource(rtResourceDesc desc) {
   resource->filePath    = desc.pathNameExt;
   resource->isBinary    = desc.isBinary;
   resource->resourcePtr = desc.resourceHnd;
+  resource->resourceManager = desc.managerType;
   rtResourceManager_private::resources.push_back(resource);
   return resource;
 }
@@ -99,11 +100,13 @@ rtResource* rtResourceManager::importAssimp(const char* PATH, uint64_t* resource
   }
 
   std::vector<rtResource> resources;
+  std::vector<rtMesh>     meshes;
   for (uint32_t i = 0; i < aScene->mNumMeshes; i++) {
     rtMesh mesh = rtMeshManager::createDefaultMesh(aScene->mMeshes[i]);
     if (!mesh) {
       continue;
     }
+    meshes.push_back(mesh);
 
     rtResourceDesc resourceDesc = {};
     resourceDesc.managerType    = rtMeshManager::managerType();
@@ -126,7 +129,7 @@ rtResource* rtResourceManager::importAssimp(const char* PATH, uint64_t* resource
 
   {
     rtScene scene = rtSceneManager::createScene();
-    rtSceneModifier::createEntitiesWithAssimp(aScene->mRootNode);
+    rtSceneModifier::createEntitiesWithAssimp(scene, aScene->mRootNode, meshes.data());
     rtResourceDesc resourceDesc = {};
     resourceDesc.managerType    = rtSceneManager::managerType();
     resourceDesc.resourceHnd    = scene;
@@ -142,6 +145,12 @@ rtResource* rtResourceManager::importAssimp(const char* PATH, uint64_t* resource
     resources.push_back(rtResourceManager::createResource(resourceDesc));
   }
 
-  new rtResource[resources.size()];
-  return nullptr;
+  rtResource* finalList = new rtResource[resources.size()];
+  memcpy(finalList, resources.data(), resources.size() * sizeof(rtResource));
+  *resourceCount = resources.size();
+  return finalList;
+}
+void* rtResourceManager::getResourceHnd(rtResource resource, rtResourceManagerType& managerType) {
+  managerType = resource->resourceManager;
+  return resource->resourcePtr;
 }

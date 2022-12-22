@@ -28,21 +28,18 @@ textureUsageMask_tgfxflag textureAllUsages = textureUsageMask_tgfx_COPYFROM |
 gpuQueue_tgfxhnd           allQueues[TGFX_WINDOWGPUSUPPORT_MAXQUEUECOUNT] = {};
 window_tgfxhnd             window;
 tgfx_swapchain_description swpchn_desc;
-static constexpr uint32_t  swapchainTextureCount                 = 2;
-static constexpr uint32_t  INIT_GPUINDEX                         = 0;
 tgfx_window_gpu_support    swapchainSupport                      = {};
 textureChannels_tgfx       depthRTFormat                         = texture_channels_tgfx_D24S8;
 texture_tgfxhnd            swpchnTextures[swapchainTextureCount] = {};
 // Create device local resources
-bindingTableType_tgfxhnd bufferBindingType    = {};
-pipeline_tgfxhnd         firstComputePipeline = {};
-pipeline_tgfxhnd         firstRasterPipeline  = {};
-bindingTable_tgfxhnd     bufferBindingTable   = {};
-uint32_t                 camUboOffset         = {};
-commandBundle_tgfxhnd    standardDrawBundle, initBundle, perSwpchnCmdBundles[swapchainTextureCount];
-uint64_t                 waitValue = 0, signalValue = 1;
-fence_tgfxhnd            fence                   = {};
-gpuQueue_tgfxhnd         queue                   = {};
+pipeline_tgfxhnd      firstComputePipeline = {};
+pipeline_tgfxhnd      firstRasterPipeline  = {};
+bindingTable_tgfxhnd  bufferBindingTable   = {};
+uint32_t              camUboOffset         = {};
+commandBundle_tgfxhnd standardDrawBundle, initBundle, perSwpchnCmdBundles[swapchainTextureCount];
+uint64_t              waitValue = 0, signalValue = 1;
+fence_tgfxhnd         fence                      = {};
+gpuQueue_tgfxhnd      queue                      = {};
 rasterpassBeginSlotInfo_tgfx colorAttachmentInfo = {}, depthAttachmentInfo = {};
 window_tgfxhnd               windowlst[2]           = {};
 commandBundle_tgfxhnd        standardDrawBundles[2] = {};
@@ -153,23 +150,25 @@ struct rtRenderer_private {
       block = allocate(*memRegion);
     }
 
-    if (reqs.memoryRegionIDs[devLocalAllocations.memoryTypeIndx] && !block) {
-      *memRegion = &devLocalAllocations;
+    if (reqs.memoryRegionIDs[m_devLocalAllocations.memoryTypeIndx] && !block) {
+      *memRegion = &m_devLocalAllocations;
       block      = allocate(*memRegion);
     }
-    if (reqs.memoryRegionIDs[stagingAllocations.memoryTypeIndx] && !block) {
-      *memRegion = &stagingAllocations;
+    if (reqs.memoryRegionIDs[m_stagingAllocations.memoryTypeIndx] && !block) {
+      *memRegion = &m_stagingAllocations;
       block      = allocate(*memRegion);
     }
     return block;
   }
 
  public:
-  static rtGpuMemRegion devLocalAllocations, stagingAllocations;
+  static rtGpuMemRegion m_devLocalAllocations, m_stagingAllocations;
   // All meshes are sub-allocations from these main buffers
-  static rtGpuMemBlock                      gpuCustomDepthRT;
-  static uint32_t                           activeSwpchnIndx;
-  static std::vector<commandBundle_tgfxhnd> uploadBundles;
+  static rtGpuMemBlock                      m_gpuCustomDepthRT, m_gpuCamBuffer;
+  static uint32_t                           m_activeSwpchnIndx;
+  static std::vector<commandBundle_tgfxhnd> m_uploadBundles, m_renderBundles;
+  static bindingTableDescription_tgfx       m_camBindingDesc;
+  static bindingTable_tgfxhnd               m_camBindingTables[swapchainTextureCount];
 
   static rtGpuMemBlock allocateBuffer(uint64_t size, bufferUsageMask_tgfxflag usageFlag,
                                       rtGpuMemRegion* memRegion = nullptr) {
@@ -207,25 +206,29 @@ struct rtRenderer_private {
     memBlock                   = findRegionAndAllocateMemBlock(&memRegion, reqs);
     memBlock->isResourceBuffer = false;
     memBlock->resource         = tex;
-    if (contentManager->bindToHeap_Texture(devLocalAllocations.memoryHeap, memBlock->offset, tex,
+    if (contentManager->bindToHeap_Texture(m_devLocalAllocations.memoryHeap, memBlock->offset, tex,
                                            {}) != result_tgfx_SUCCESS) {
       assert(0 && "Bind to Heap failed!");
     }
     return memBlock;
   }
 };
-rtGpuMemBlock   rtRenderer_private::gpuCustomDepthRT                    = {};
-gpuMemRegion_rt rtRenderer_private::devLocalAllocations                 = {},
-                rtRenderer_private::stagingAllocations                  = {};
-uint32_t                           rtRenderer_private::activeSwpchnIndx = 0;
-std::vector<commandBundle_tgfxhnd> rtRenderer_private::uploadBundles    = {};
+rtGpuMemBlock rtRenderer_private::m_gpuCustomDepthRT = {}, rtRenderer_private::m_gpuCamBuffer = {};
+gpuMemRegion_rt rtRenderer_private::m_devLocalAllocations                 = {},
+                rtRenderer_private::m_stagingAllocations                  = {};
+uint32_t                           rtRenderer_private::m_activeSwpchnIndx = 0;
+std::vector<commandBundle_tgfxhnd> rtRenderer_private::m_uploadBundles    = {},
+                                   rtRenderer_private::m_renderBundles    = {};
+bindingTable_tgfxhnd         rtRenderer_private::m_camBindingTables[swapchainTextureCount];
+bindingTableDescription_tgfx rtRenderer_private::m_camBindingDesc = {};
+static shaderSource_tgfxhnd  fragShader                           = {};
 
 rtGpuMemBlock rtRenderer::allocateMemoryBlock(bufferUsageMask_tgfxflag flag, uint64_t size,
                                               regionType memType) {
   rtGpuMemRegion* region = {};
   switch (memType) {
-    case UPLOAD: region = &rtRenderer_private::stagingAllocations; break;
-    case LOCAL: region = &rtRenderer_private::devLocalAllocations; break;
+    case UPLOAD: region = &rtRenderer_private::m_stagingAllocations; break;
+    case LOCAL: region = &rtRenderer_private::m_devLocalAllocations; break;
   }
   return rtRenderer_private::allocateBuffer(size, flag, region);
 }
@@ -316,16 +319,16 @@ void createDeviceLocalResources() {
          "An appropriate memory region isn't found!");
   // Create Host Visible (staging) memory heap
   contentManager->createHeap(gpu, gpuDesc.memRegions[hostVisibleMemType].memorytype_id, heapSize,
-                             nullptr, &rtRenderer_private::stagingAllocations.memoryHeap);
-  contentManager->mapHeap(rtRenderer_private::stagingAllocations.memoryHeap, 0, heapSize, nullptr,
-                          &rtRenderer_private::stagingAllocations.mappedRegion);
-  rtRenderer_private::stagingAllocations.memoryRegionSize = heapSize;
-  rtRenderer_private::stagingAllocations.memoryTypeIndx   = hostVisibleMemType;
+                             nullptr, &rtRenderer_private::m_stagingAllocations.memoryHeap);
+  contentManager->mapHeap(rtRenderer_private::m_stagingAllocations.memoryHeap, 0, heapSize, nullptr,
+                          &rtRenderer_private::m_stagingAllocations.mappedRegion);
+  rtRenderer_private::m_stagingAllocations.memoryRegionSize = heapSize;
+  rtRenderer_private::m_stagingAllocations.memoryTypeIndx   = hostVisibleMemType;
   // Create Device Logal memory heap
   contentManager->createHeap(gpu, gpuDesc.memRegions[deviceLocalMemType].memorytype_id, heapSize,
-                             nullptr, &rtRenderer_private::devLocalAllocations.memoryHeap);
-  rtRenderer_private::devLocalAllocations.memoryTypeIndx   = deviceLocalMemType;
-  rtRenderer_private::devLocalAllocations.memoryRegionSize = heapSize;
+                             nullptr, &rtRenderer_private::m_devLocalAllocations.memoryHeap);
+  rtRenderer_private::m_devLocalAllocations.memoryTypeIndx   = deviceLocalMemType;
+  rtRenderer_private::m_devLocalAllocations.memoryRegionSize = heapSize;
 
   textureDescription_tgfx textureDesc = {};
   textureDesc.channelType             = depthRTFormat;
@@ -337,7 +340,7 @@ void createDeviceLocalResources() {
   textureDesc.permittedQueues         = allQueues;
   textureDesc.usage = textureUsageMask_tgfx_RENDERATTACHMENT | textureUsageMask_tgfx_COPYFROM |
                       textureUsageMask_tgfx_COPYTO;
-  rtRenderer_private::gpuCustomDepthRT = rtRenderer_private::allocateTexture(textureDesc);
+  rtRenderer_private::m_gpuCustomDepthRT = rtRenderer_private::allocateTexture(textureDesc);
 
 #ifdef NDEBUG
   printf("createDeviceLocalResources() finished!\n");
@@ -354,186 +357,25 @@ void compileShadersandPipelines() {
                                         shaderStage_tgfx_COMPUTESHADER, ( void* )shaderText,
                                         strlen(shaderText), &firstComputeShader);
 
-    // Create binding table types
-    {
-      tgfx_binding_table_description desc = {};
-      desc.DescriptorType                 = shaderdescriptortype_tgfx_BUFFER;
-      desc.ElementCount                   = 1;
-      desc.SttcSmplrs                     = nullptr;
-      desc.visibleStagesMask = shaderStage_tgfx_COMPUTESHADER | shaderStage_tgfx_VERTEXSHADER |
-                               shaderStage_tgfx_FRAGMENTSHADER;
-      contentManager->createBindingTableType(gpu, &desc, &bufferBindingType);
-    }
+    // Create binding table desc
+    tgfx_binding_table_description desc = {};
+    desc.DescriptorType                 = shaderdescriptortype_tgfx_BUFFER;
+    desc.ElementCount                   = 1;
+    desc.SttcSmplrs                     = nullptr;
+    desc.visibleStagesMask = shaderStage_tgfx_COMPUTESHADER | shaderStage_tgfx_VERTEXSHADER |
+                             shaderStage_tgfx_FRAGMENTSHADER;
 
-    bindingTableType_tgfxhnd bindingTypes[2] = {bufferBindingType,
-                                                ( bindingTableType_tgfxhnd )tgfx->INVALIDHANDLE};
-    contentManager->createComputePipeline(firstComputeShader, bindingTypes, false,
+    contentManager->createComputePipeline(firstComputeShader, 1, &desc, false,
                                           &firstComputePipeline);
   }
 
-  // Compile first vertex-fragment shader & raster pipeline
+  // Compile default fragment shader
   {
-    shaderSource_tgfxhnd shaderSources[2] = {};
-    const char*          vertShaderText =
-      filesys->funcs->read_textfile(SOURCE_DIR "Content/firstShader.vert");
-    shaderSource_tgfxhnd& firstVertShader = shaderSources[0];
-    contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
-                                        shaderStage_tgfx_VERTEXSHADER, ( void* )vertShaderText,
-                                        strlen(vertShaderText),
-                                        // vertShaderBin, vertDataSize,
-                                        &firstVertShader);
-
     const char* fragShaderText =
       filesys->funcs->read_textfile(SOURCE_DIR "Content/firstShader.frag");
-    shaderSource_tgfxhnd& firstFragShader = shaderSources[1];
     contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
                                         shaderStage_tgfx_FRAGMENTSHADER, ( void* )fragShaderText,
-                                        strlen(fragShaderText),
-                                        // fragShaderBin, fragDataSize,
-                                        &firstFragShader);
-
-    vertexAttributeDescription_tgfx attribs[3];
-    vertexBindingDescription_tgfx   bindings[1];
-    {
-      attribs[0].attributeIndx = 0;
-      attribs[0].bindingIndx   = 0;
-      attribs[0].dataType      = datatype_tgfx_VAR_VEC3;
-      attribs[0].offset        = 0;
-
-      attribs[1].attributeIndx = 1;
-      attribs[1].bindingIndx   = 0;
-      attribs[1].dataType      = datatype_tgfx_VAR_VEC3;
-      attribs[1].offset        = 8;
-
-      attribs[2].attributeIndx = 2;
-      attribs[2].bindingIndx   = 0;
-      attribs[2].dataType      = datatype_tgfx_VAR_VEC2;
-      attribs[2].offset        = 0;
-
-      bindings[0].bindingIndx = 0;
-      bindings[0].inputRate   = vertexBindingInputRate_tgfx_VERTEX;
-      bindings[0].stride      = 32;
-    }
-
-    rasterStateDescription_tgfx stateDesc         = {};
-    stateDesc.culling                             = cullmode_tgfx_OFF;
-    stateDesc.polygonmode                         = polygonmode_tgfx_FILL;
-    stateDesc.topology                            = vertexlisttypes_tgfx_TRIANGLELIST;
-    stateDesc.depthStencilState.depthTestEnabled  = true;
-    stateDesc.depthStencilState.depthWriteEnabled = true;
-    stateDesc.depthStencilState.depthCompare      = compare_tgfx_ALWAYS;
-    stateDesc.blendStates[0].blendEnabled         = false;
-    stateDesc.blendStates[0].blendComponents      = textureComponentMask_tgfx_ALL;
-    stateDesc.blendStates[0].alphaMode            = blendmode_tgfx_MAX;
-    stateDesc.blendStates[0].colorMode            = blendmode_tgfx_ADDITIVE;
-    stateDesc.blendStates[0].dstAlphaFactor       = blendfactor_tgfx_DST_ALPHA;
-    stateDesc.blendStates[0].srcAlphaFactor       = blendfactor_tgfx_SRC_ALPHA;
-    stateDesc.blendStates[0].dstColorFactor       = blendfactor_tgfx_DST_COLOR;
-    stateDesc.blendStates[0].srcColorFactor       = blendfactor_tgfx_SRC_COLOR;
-    rasterPipelineDescription_tgfx pipelineDesc   = {};
-    pipelineDesc.colorTextureFormats[0]           = swpchn_desc.channels;
-    pipelineDesc.depthStencilTextureFormat        = depthRTFormat;
-    pipelineDesc.mainStates                       = &stateDesc;
-    pipelineDesc.shaderSourceList                 = shaderSources;
-    pipelineDesc.attribLayout.attribCount         = 3;
-    pipelineDesc.attribLayout.bindingCount        = 1;
-    pipelineDesc.attribLayout.i_attributes        = attribs;
-    pipelineDesc.attribLayout.i_bindings          = bindings;
-    bindingTableType_tgfxhnd bindingTypes[2]      = {bufferBindingType,
-                                                     ( bindingTableType_tgfxhnd )tgfx->INVALIDHANDLE};
-    pipelineDesc.typeTables                       = bindingTypes;
-
-    contentManager->createRasterPipeline(&pipelineDesc, nullptr, &firstRasterPipeline);
-    contentManager->destroyShaderSource(shaderSources[0]);
-    contentManager->destroyShaderSource(shaderSources[1]);
-  }
-}
-
-void recordCommandBundles() {
-  initBundle = renderer->beginCommandBundle(gpu, 3, nullptr, nullptr);
-  renderer->finishCommandBundle(initBundle, nullptr);
-  static constexpr uint32_t cmdCount = 9;
-  // Record command bundle
-  standardDrawBundle = renderer->beginCommandBundle(gpu, cmdCount, firstRasterPipeline, nullptr);
-  {
-    bindingTable_tgfxhnd bindingTables[2] = {bufferBindingTable,
-                                             ( bindingTable_tgfxhnd )tgfx->INVALIDHANDLE};
-    uint32_t             cmdKey           = 0;
-
-    renderer->cmdSetDepthBounds(standardDrawBundle, cmdKey++, 0.0f, 1.0f);
-    renderer->cmdSetViewport(standardDrawBundle, cmdKey++, {0, 0, 1280, 720, 0.0f, 1.0f});
-    renderer->cmdSetScissor(standardDrawBundle, cmdKey++, {0, 0}, {1280, 720});
-    renderer->cmdBindPipeline(standardDrawBundle, cmdKey++, firstRasterPipeline);
-    /*
-    renderer->cmdBindBindingTables(standardDrawBundle, cmdKey++, bindingTables, 0,
-                                   pipelineType_tgfx_RASTER);
-    uint32_t meshCount = glm::min(firstModel->meshCount, 6u);
-
-    const std::vector<indirectOperationType_tgfx> indirectOpTypes(
-      meshCount, indirectOperationType_tgfx_DRAWINDEXED);
-    tgfx_indirect_argument_draw_indexed* indirectArgs =
-      ( tgfx_indirect_argument_draw_indexed* )mappedRegion;
-    uint64_t vertexBufferOffset = camUboOffset + sizeof(camUbo), totalVertexCount = 0,
-             totalIndexCount = 0;
-    for (uint32_t meshIndx = 0; meshIndx < meshCount; meshIndx++) {
-      defaultMesh_rt& mesh = firstModel->meshes[meshIndx];
-      uintptr_t       dst =
-        ( uintptr_t )mappedRegion + vertexBufferOffset + (sizeof(tri_vertex) * totalVertexCount);
-      memcpy(( void* )dst, mesh.vertices, sizeof(tri_vertex) * mesh.v_count);
-      indirectArgs[meshIndx].vertexOffset = totalVertexCount;
-      totalVertexCount += mesh.v_count;
-    }
-    for (uint32_t meshIndx = 0; meshIndx < meshCount; meshIndx++) {
-      defaultMesh_rt& mesh = firstModel->meshes[meshIndx];
-      uintptr_t       dst  = ( uintptr_t )mappedRegion + vertexBufferOffset +
-                      (sizeof(tri_vertex) * totalVertexCount) +
-                      (sizeof(uint32_t) * totalIndexCount);
-      indirectArgs[meshIndx].firstIndex            = totalIndexCount;
-      indirectArgs[meshIndx].firstInstance         = 0;
-      indirectArgs[meshIndx].indexCountPerInstance = mesh.i_count;
-      indirectArgs[meshIndx].instanceCount         = 1;
-      memcpy(( void* )dst, mesh.indexbuffer, sizeof(uint32_t) * mesh.i_count);
-      totalIndexCount += mesh.i_count;
-    }
-    for (uint32_t i = 0; i < meshCount; i++) {
-      defaultMesh_rt& mesh = firstModel->meshes[i];
-      printf("MeshInfo: vCount = %u, iCount = %u\nIndirectArgument: iCount = %u, iOffset = %u\n\n",
-             mesh.v_count, mesh.i_count, indirectArgs[i].indexCountPerInstance,
-             indirectArgs[i].firstIndex);
-    }
-    renderer->cmdBindVertexBuffers(standardDrawBundle, cmdKey++, 0, 1, &firstBuffer,
-                                   &vertexBufferOffset);
-    renderer->cmdBindIndexBuffer(standardDrawBundle, cmdKey++, firstBuffer,
-                                 vertexBufferOffset + (sizeof(tri_vertex) * totalVertexCount), 4);
-    renderer->cmdExecuteIndirect(standardDrawBundle, cmdKey++, indirectOpTypes.size(),
-                                 indirectOpTypes.data(), firstBuffer, 0, nullptr);
-                                 */
-    assert(cmdKey <= cmdCount && "Cmd count doesn't match!");
-  }
-  renderer->finishCommandBundle(standardDrawBundle, nullptr);
-}
-
-void recordSwpchnCmdBundles() {
-  for (uint32_t i = 0; i < swapchainTextureCount; i++) {
-    static constexpr uint32_t cmdCount = 5;
-    // Record command bundle
-    perSwpchnCmdBundles[i] =
-      renderer->beginCommandBundle(gpu, cmdCount, firstRasterPipeline, nullptr);
-    {
-      bindingTable_tgfxhnd bindingTables[2] = {bufferBindingTable,
-                                               ( bindingTable_tgfxhnd )tgfx->INVALIDHANDLE};
-      uint32_t             cmdKey           = 0;
-
-      renderer->cmdBindPipeline(perSwpchnCmdBundles[i], cmdKey++, firstRasterPipeline);
-      renderer->cmdBindBindingTables(perSwpchnCmdBundles[i], cmdKey++, bindingTables, 0,
-                                     pipelineType_tgfx_COMPUTE);
-      renderer->cmdSetViewport(perSwpchnCmdBundles[i], cmdKey++, {0, 0, 1280, 720, 0.0f, 1.0f});
-      renderer->cmdSetScissor(perSwpchnCmdBundles[i], cmdKey++, {0, 0}, {1280, 720});
-      renderer->cmdDrawNonIndexedDirect(perSwpchnCmdBundles[i], cmdKey++, 3, 1, 0, 0);
-
-      assert(cmdKey <= cmdCount && "Cmd count doesn't match!");
-    }
-    renderer->finishCommandBundle(perSwpchnCmdBundles[i], nullptr);
+                                        strlen(fragShaderText), &fragShader);
   }
 }
 
@@ -544,7 +386,6 @@ void rtRenderer::initialize(tgfx_windowKeyCallback keyCB) {
   createFirstWindow(keyCB);
   createDeviceLocalResources();
   compileShadersandPipelines();
-  recordCommandBundles();
 
   renderer->createFences(gpu, 1, 0u, &fence);
   gpuQueue_tgfxlsthnd queuesPerFam;
@@ -573,7 +414,38 @@ void rtRenderer::initialize(tgfx_windowKeyCallback keyCB) {
     depthAttachmentInfo.loadStencilOp  = rasterpassLoad_tgfx_CLEAR;
     depthAttachmentInfo.storeOp        = rasterpassStore_tgfx_STORE;
     depthAttachmentInfo.storeStencilOp = rasterpassStore_tgfx_STORE;
-    depthAttachmentInfo.texture = ( texture_tgfxhnd )rtRenderer_private::gpuCustomDepthRT->resource;
+    depthAttachmentInfo.texture =
+      ( texture_tgfxhnd )rtRenderer_private::m_gpuCustomDepthRT->resource;
+  }
+
+  // Binding table creation
+  {
+    rtRenderer_private::m_camBindingDesc.DescriptorType    = shaderdescriptortype_tgfx_BUFFER;
+    rtRenderer_private::m_camBindingDesc.ElementCount      = 1;
+    rtRenderer_private::m_camBindingDesc.SttcSmplrs        = {};
+    rtRenderer_private::m_camBindingDesc.visibleStagesMask = shaderStage_tgfx_VERTEXSHADER;
+    rtRenderer_private::m_camBindingDesc.isDynamic         = true;
+
+    for (uint32_t i = 0; i < swapchainTextureCount; i++) {
+      contentManager->createBindingTable(gpu, &rtRenderer_private::m_camBindingDesc,
+                                         &rtRenderer_private::m_camBindingTables[i]);
+    }
+  }
+
+  // Create camera shader buffer and bind it to camera binding table
+  {
+    rtRenderer_private::m_gpuCamBuffer = rtRenderer_private::allocateBuffer(
+      sizeof(glm::mat4) * 2 * swapchainTextureCount,
+      bufferUsageMask_tgfx_COPYTO | bufferUsageMask_tgfx_STORAGEBUFFER,
+      &rtRenderer_private::m_stagingAllocations);
+    for (uint32_t i = 0; i < swapchainTextureCount; i++) {
+      uint32_t bindingIndx = 0, bufferOffset = sizeof(glm::mat4) * 2 * i,
+               bufferSize = sizeof(glm::mat4) * 2;
+      contentManager->setBindingTable_Buffer(
+        rtRenderer_private::m_camBindingTables[i], 1, &bindingIndx,
+        ( buffer_tgfxhnd* )&rtRenderer_private::m_gpuCamBuffer->resource, &bufferOffset,
+        &bufferSize, {});
+    }
   }
 
   // Initialization Command Buffer Recording
@@ -606,19 +478,20 @@ void rtRenderer::initialize(tgfx_windowKeyCallback keyCB) {
   waitValue++;
   signalValue++;
 }
-void rtRenderer::renderFrame() {
+void rtRenderer::getSwapchainTexture() {
   uint64_t currentFenceValue = 0;
   while (currentFenceValue < signalValue - 2) {
     renderer->getFenceValue(fence, &currentFenceValue);
     printf("Waiting for fence value %u, currentFenceValue %u!\n", signalValue - 2,
            currentFenceValue);
   }
-  tgfx->getCurrentSwapchainTextureIndex(window, &rtRenderer_private::activeSwpchnIndx);
-
+  tgfx->getCurrentSwapchainTextureIndex(window, &rtRenderer_private::m_activeSwpchnIndx);
+}
+void rtRenderer::renderFrame() {
   {
     commandBuffer_tgfxhnd uploadCmdBuffer = renderer->beginCommandBuffer(queue, {});
-    rtRenderer_private::uploadBundles.push_back(( commandBundle_tgfxhnd )tgfx->INVALIDHANDLE);
-    renderer->executeBundles(uploadCmdBuffer, rtRenderer_private::uploadBundles.data(), {});
+    rtRenderer_private::m_uploadBundles.push_back(( commandBundle_tgfxhnd )tgfx->INVALIDHANDLE);
+    renderer->executeBundles(uploadCmdBuffer, rtRenderer_private::m_uploadBundles.data(), {});
     renderer->endCommandBuffer(uploadCmdBuffer);
     commandBuffer_tgfxhnd frameCmdBuffers[2] = {uploadCmdBuffer,
                                                 ( commandBuffer_tgfxhnd )tgfx->INVALIDHANDLE};
@@ -627,12 +500,13 @@ void rtRenderer::renderFrame() {
   // Record & submit frame's scene render command buffer
   {
     commandBundle_tgfxhnd frameCmdBundles[2] = {
-      perSwpchnCmdBundles[rtRenderer_private::activeSwpchnIndx],
+      perSwpchnCmdBundles[rtRenderer_private::m_activeSwpchnIndx],
       ( commandBundle_tgfxhnd )tgfx->INVALIDHANDLE};
     commandBuffer_tgfxhnd frameCmdBuffer = renderer->beginCommandBuffer(queue, nullptr);
-    colorAttachmentInfo.texture          = swpchnTextures[rtRenderer_private::activeSwpchnIndx];
+    colorAttachmentInfo.texture          = swpchnTextures[rtRenderer_private::m_activeSwpchnIndx];
     renderer->beginRasterpass(frameCmdBuffer, 1, &colorAttachmentInfo, depthAttachmentInfo, {});
-    renderer->executeBundles(frameCmdBuffer, standardDrawBundles, nullptr);
+    rtRenderer_private::m_renderBundles.push_back(( commandBundle_tgfxhnd )tgfx->INVALIDHANDLE);
+    renderer->executeBundles(frameCmdBuffer, rtRenderer_private::m_renderBundles.data(), nullptr);
     renderer->endRasterpass(frameCmdBuffer, {});
     renderer->endCommandBuffer(frameCmdBuffer);
 
@@ -646,9 +520,23 @@ void rtRenderer::renderFrame() {
   signalValue++;
   renderer->queuePresent(queue, windowlst);
   renderer->queueSubmit(queue);
+
+  rtRenderer_private::m_uploadBundles.clear();
+  rtRenderer_private::m_renderBundles.clear();
 }
-void rtRenderer::upload(commandBundle_tgfxhnd uploadBundle) {
-  rtRenderer_private::uploadBundles.push_back(uploadBundle);
+
+shaderSource_tgfxhnd rtRenderer::getDefaultFragShader() { return fragShader; }
+
+void rtRenderer::getRTFormats(rasterPipelineDescription_tgfx* rasterPipeDesc) {
+  rasterPipeDesc->colorTextureFormats[0]    = swpchn_desc.channels;
+  rasterPipeDesc->depthStencilTextureFormat = depthRTFormat;
+}
+unsigned int rtRenderer::getFrameIndx() { return rtRenderer_private::m_activeSwpchnIndx; }
+void         rtRenderer::upload(commandBundle_tgfxhnd uploadBundle) {
+          rtRenderer_private::m_uploadBundles.push_back(uploadBundle);
+}
+void rtRenderer::render(commandBundle_tgfxhnd renderBundle) {
+  rtRenderer_private::m_renderBundles.push_back(renderBundle);
 }
 
 void rtRenderer::close() {
@@ -660,7 +548,6 @@ void rtRenderer::close() {
   contentManager->destroyPipeline(firstRasterPipeline);
   contentManager->destroyPipeline(firstComputePipeline);
   contentManager->destroyBindingTable(bufferBindingTable);
-  contentManager->destroyBindingTableType(bufferBindingType);
   renderer->destroyFence(fence);
 }
 
@@ -678,12 +565,16 @@ struct camUbo {
 camUbo* cams = {};
 
 void rtRenderer::setActiveFrameCamProps(glm::mat4 view, glm::mat4 proj) {
-  /*
   if (!cams) {
-    cams = ( camUbo* )( uintptr_t )rtRenderer_private::stagingAllocations.mappedRegion +
-           rtRenderer_private::gpuCamBuffer->offset;
+    cams = ( camUbo* )getBufferMappedMemPtr(rtRenderer_private::m_gpuCamBuffer);
   }
-  cams[rtRenderer_private::activeSwpchnIndx].view = view;
-  cams[rtRenderer_private::activeSwpchnIndx].proj = proj;
-  */
+  cams[rtRenderer_private::m_activeSwpchnIndx].view = view;
+  cams[rtRenderer_private::m_activeSwpchnIndx].proj = proj;
+}
+
+bindingTable_tgfxhnd rtRenderer::getActiveCamBindingTable() {
+  return rtRenderer_private::m_camBindingTables[getFrameIndx()];
+}
+const bindingTableDescription_tgfx* rtRenderer::getCamBindingDesc() {
+  return &rtRenderer_private::m_camBindingDesc;
 }

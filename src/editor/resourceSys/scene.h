@@ -6,9 +6,12 @@
 typedef struct scene_rt* rtScene;
 
 struct aiNode;
+typedef struct mesh_rt* rtMesh;
 typedef struct sceneModifier_rt {
   static entityHnd_ecstapi addDefaultEntity(rtScene scene);
-  static void              createEntitiesWithAssimp(aiNode* rootNode);
+  // @param: Meshes should be in the same order as aiScene's
+  static void createEntitiesWithAssimp(rtScene scene, aiNode* rootNode, rtMesh* const meshes);
+  static void renderScene(rtScene scene);
 } rtSceneModifier;
 
 typedef struct sceneManager_rt {

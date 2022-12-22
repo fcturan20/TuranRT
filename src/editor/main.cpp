@@ -149,26 +149,42 @@ void load_systems() {
 
   uint64_t    resourceCount  = {};
   rtResource* firstResources = rtResourceManager::importAssimp(
-    // SOURCE_DIR "Content/cube.fbx"
-    "D:/Desktop/Meshes/Gun/Handgun_fbx_7.4_binary.fbx", &resourceCount);
+    //SOURCE_DIR "Content/cube.glb"
+    SOURCE_DIR "Content/gun.glb"
+    , &resourceCount
+  );
+  rtScene  firstScene = {};
+  for (uint32_t resourceIndx = 0; resourceIndx < resourceCount; resourceIndx++) {
+    rtResourceManagerType type = {};
+    void* resHnd = rtResourceManager::getResourceHnd(firstResources[resourceIndx], type);
+    if (type == rtSceneManager::managerType()) {
+      firstScene = ( rtScene )resHnd;
+    }
+  }
+
 
   int      i        = 0;
   uint64_t duration = {};
   while (++i && i < 1000000) {
-    TURAN_PROFILE_SCOPE_MCS(profilerSys->funcs, "presentation", &duration);
+    profiledscope_handle_tapi frameScope = {};
+    profilerSys->funcs->start_profiling(&frameScope, "Frame Duration", &duration, 1);
+    TURAN_PROFILE_SCOPE_MCS(profilerSys->funcs, "Frame", &duration);
+    rtRenderer::getSwapchainTexture();
 
     frontVector         = glm::normalize(camTarget);
     rightVector         = -glm::normalize(glm::cross(world_up, frontVector));
     glm::vec3 UP_VECTOR = -glm::normalize(glm::cross(frontVector, rightVector));
     rtRenderer::setActiveFrameCamProps(
       glm::lookAt(camPos, camPos + frontVector, world_up),
-      glm::perspective(glm::radians(90.0f), 16.0f / 9.0f, 0.01f, 100.0f));
+      glm::perspective(glm::radians(45.0f), 16.0f / 9.0f, 0.01f, 100.0f));
 
     rtMeshManager::frame();
+    rtSceneModifier::renderScene(firstScene);
     rtRenderer::renderFrame();
     tgfx->takeInputs();
+    profilerSys->funcs->finish_profiling(&frameScope, false);
     STOP_PROFILE_PRINTFUL_TAPI(profilerSys->funcs);
-    printf("Finished and frame index: %u\n", i);
+    printf("Frame index: %u, duration: %u\n\n\n", i, duration);
   }
 
   rtRenderer::close();
