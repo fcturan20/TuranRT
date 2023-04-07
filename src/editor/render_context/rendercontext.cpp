@@ -1,17 +1,18 @@
-#include <filesys_tapi.h>
-#include <string.h>
-
 #include <glm/glm.hpp>
 #include <vector>
+#include <string.h>
+
+#include <filesys_tapi.h>
+#include <string_tapi.h>
+#include <profiler_tapi.h>
+
+#include <tgfx_core.h>
+#include <tgfx_gpucontentmanager.h>
+#include <tgfx_helper.h>
+#include <tgfx_renderer.h>
+#include <tgfx_structs.h>
 
 #include "../editor_includes.h"
-#include "profiler_tapi.h"
-#include "tgfx_core.h"
-#include "tgfx_gpucontentmanager.h"
-#include "tgfx_helper.h"
-#include "tgfx_renderer.h"
-#include "tgfx_structs.h"
-
 #include "rendercontext.h"
 
 tgfx_renderer*            renderer       = nullptr;
@@ -26,24 +27,20 @@ textureUsageMask_tgfxflag textureAllUsages = textureUsageMask_tgfx_COPYFROM |
                           storageImageUsage =
                             textureUsageMask_tgfx_COPYTO | textureUsageMask_tgfx_RANDOMACCESS;
 gpuQueue_tgfxhnd           allQueues[TGFX_WINDOWGPUSUPPORT_MAXQUEUECOUNT] = {};
-window_tgfxhnd             window;
+window_tgfxhnd             mainWindowRT;
 tgfx_swapchain_description swpchn_desc;
 tgfx_window_gpu_support    swapchainSupport                      = {};
 textureChannels_tgfx       depthRTFormat                         = texture_channels_tgfx_D24S8;
 texture_tgfxhnd            swpchnTextures[swapchainTextureCount] = {};
 // Create device local resources
-pipeline_tgfxhnd      firstComputePipeline = {};
-pipeline_tgfxhnd      firstRasterPipeline  = {};
-bindingTable_tgfxhnd  bufferBindingTable   = {};
-uint32_t              camUboOffset         = {};
-commandBundle_tgfxhnd standardDrawBundle, initBundle, perSwpchnCmdBundles[swapchainTextureCount];
-uint64_t              waitValue = 0, signalValue = 1;
-fence_tgfxhnd         fence                      = {};
-gpuQueue_tgfxhnd      queue                      = {};
+pipeline_tgfxhnd             firstComputePipeline = {};
+bindingTable_tgfxhnd         bufferBindingTable   = {};
+uint32_t                     camUboOffset         = {};
+uint64_t                     waitValue = 0, signalValue = 1;
+fence_tgfxhnd                fence               = {};
+gpuQueue_tgfxhnd             queue               = {};
 rasterpassBeginSlotInfo_tgfx colorAttachmentInfo = {}, depthAttachmentInfo = {};
-window_tgfxhnd               windowlst[2]           = {};
-commandBundle_tgfxhnd        standardDrawBundles[2] = {};
-fence_tgfxhnd                waitFences[2]          = {};
+static uint32_t              GPU_INDEX = 0;
 
 typedef struct gpuMemBlock_rt* rtGpuMemBlock;
 // Returns the dif between offset's previous and new value
@@ -180,14 +177,14 @@ struct rtRenderer_private {
     bufferDesc.usageFlag              = usageFlag;
     contentManager->createBuffer(gpu, &bufferDesc, &buf);
     tgfx_heap_requirements_info reqs;
-    contentManager->getHeapRequirement_Buffer(buf, {}, &reqs);
+    contentManager->getHeapRequirement_Buffer(buf, 0, {}, &reqs);
 
     rtGpuMemBlock memBlock = {};
     memBlock               = findRegionAndAllocateMemBlock(&memRegion, reqs);
     if (memBlock) {
       memBlock->isResourceBuffer = true;
       memBlock->resource         = buf;
-      if (contentManager->bindToHeap_Buffer(memRegion->memoryHeap, memBlock->offset, buf, {}) !=
+      if (contentManager->bindToHeap_Buffer(memRegion->memoryHeap, memBlock->offset, buf, 0, {}) !=
           result_tgfx_SUCCESS) {
         assert(0 && "Bind to Heap failed!");
       }
@@ -200,14 +197,14 @@ struct rtRenderer_private {
     texture_tgfxhnd tex;
     contentManager->createTexture(gpu, &desc, &tex);
     heapRequirementsInfo_tgfx reqs;
-    contentManager->getHeapRequirement_Texture(tex, nullptr, &reqs);
+    contentManager->getHeapRequirement_Texture(tex, 0, nullptr, &reqs);
 
     rtGpuMemBlock memBlock     = {};
     memBlock                   = findRegionAndAllocateMemBlock(&memRegion, reqs);
     memBlock->isResourceBuffer = false;
     memBlock->resource         = tex;
     if (contentManager->bindToHeap_Texture(m_devLocalAllocations.memoryHeap, memBlock->offset, tex,
-                                           {}) != result_tgfx_SUCCESS) {
+                                           0, nullptr) != result_tgfx_SUCCESS) {
       assert(0 && "Bind to Heap failed!");
     }
     return memBlock;
@@ -236,10 +233,12 @@ rtGpuMemBlock rtRenderer::allocateMemoryBlock(bufferUsageMask_tgfxflag flag, uin
 void createGPU() {
   tgfx->load_backend(nullptr, backends_tgfx_VULKAN, nullptr);
 
-  gpu_tgfxlsthnd gpus;
-  tgfx->getGPUlist(&gpus);
-  TGFXLISTCOUNT(tgfx, gpus, gpuCount);
-  gpu = gpus[INIT_GPUINDEX];
+  gpu_tgfxhnd  GPUs[4]  = {};
+  unsigned int gpuCount = 0;
+  tgfx->getGPUlist(&gpuCount, GPUs);
+  tgfx->getGPUlist(&gpuCount, GPUs);
+  GPU_INDEX = glm::min(gpuCount - 1, GPU_INDEX);
+  gpu       = GPUs[GPU_INDEX];
   tgfx->helpers->getGPUInfo_General(gpu, &gpuDesc);
   printf("\n\nGPU Name: %s\n  Queue Fam Count: %u\n", gpuDesc.name, gpuDesc.queueFamilyCount);
   tgfx->initGPU(gpu);
@@ -247,29 +246,32 @@ void createGPU() {
 
 void createFirstWindow(tgfx_windowKeyCallback keyCB) {
   // Create window and the swapchain
-  monitor_tgfxlsthnd monitors;
+  monitor_tgfxhnd mainMonitor;
   {
+    monitor_tgfxhnd monitorList[16] = {};
+    uint32_t        monitorCount    = 0;
     // Get monitor list
-    tgfx->getmonitorlist(&monitors);
-    TGFXLISTCOUNT(tgfx, monitors, monitorCount);
+    tgfx->getMonitorList(&monitorCount, monitorList);
+    tgfx->getMonitorList(&monitorCount, monitorList);
     printf("Monitor Count: %u\n", monitorCount);
+    mainMonitor = monitorList[0];
   }
 
   // Create window (OS operation) on first monitor
   {
     tgfx_window_description windowDesc = {};
     windowDesc.size                    = {1280, 720};
-    windowDesc.Mode                    = windowmode_tgfx_WINDOWED;
-    windowDesc.monitor                 = monitors[0];
-    windowDesc.NAME                    = gpuDesc.name;
-    windowDesc.ResizeCB                = nullptr;
-    windowDesc.keyCB                   = keyCB;
-    tgfx->createWindow(&windowDesc, nullptr, &window);
+    windowDesc.mode                    = windowmode_tgfx_WINDOWED;
+    windowDesc.monitor                 = mainMonitor;
+    windowDesc.name                    = gpuDesc.name;
+    windowDesc.resizeCb                = nullptr;
+    windowDesc.keyCb                   = keyCB;
+    tgfx->createWindow(&windowDesc, nullptr, &mainWindowRT);
   }
 
   // Create swapchain (GPU operation) on the window
   {
-    tgfx->helpers->getWindow_GPUSupport(window, gpu, &swapchainSupport);
+    tgfx->helpers->getWindow_GPUSupport(mainWindowRT, gpu, &swapchainSupport);
 
     swpchn_desc.channels       = swapchainSupport.channels[0];
     swpchn_desc.colorSpace     = colorspace_tgfx_sRGB_NONLINEAR;
@@ -278,10 +280,14 @@ void createFirstWindow(tgfx_windowKeyCallback keyCB) {
     swpchn_desc.swapchainUsage = textureAllUsages;
 
     swpchn_desc.presentationMode = windowpresentation_tgfx_IMMEDIATE;
-    swpchn_desc.window           = window;
+    swpchn_desc.window           = mainWindowRT;
     // Get all supported queues of the first GPU
     for (uint32_t i = 0; i < TGFX_WINDOWGPUSUPPORT_MAXQUEUECOUNT; i++) {
+      if (!swapchainSupport.queues[i]) {
+        break;
+      }
       allQueues[i] = swapchainSupport.queues[i];
+      swpchn_desc.permittedQueueCount++;
     }
     swpchn_desc.permittedQueues = allQueues;
     // Create swapchain
@@ -318,14 +324,14 @@ void createDeviceLocalResources() {
   assert(hostVisibleMemType != UINT32_MAX && deviceLocalMemType != UINT32_MAX &&
          "An appropriate memory region isn't found!");
   // Create Host Visible (staging) memory heap
-  contentManager->createHeap(gpu, gpuDesc.memRegions[hostVisibleMemType].memorytype_id, heapSize,
+  contentManager->createHeap(gpu, gpuDesc.memRegions[hostVisibleMemType].memorytype_id, heapSize, 0,
                              nullptr, &rtRenderer_private::m_stagingAllocations.memoryHeap);
-  contentManager->mapHeap(rtRenderer_private::m_stagingAllocations.memoryHeap, 0, heapSize, nullptr,
-                          &rtRenderer_private::m_stagingAllocations.mappedRegion);
+  contentManager->mapHeap(rtRenderer_private::m_stagingAllocations.memoryHeap, 0, heapSize, 0,
+                          nullptr, &rtRenderer_private::m_stagingAllocations.mappedRegion);
   rtRenderer_private::m_stagingAllocations.memoryRegionSize = heapSize;
   rtRenderer_private::m_stagingAllocations.memoryTypeIndx   = hostVisibleMemType;
   // Create Device Logal memory heap
-  contentManager->createHeap(gpu, gpuDesc.memRegions[deviceLocalMemType].memorytype_id, heapSize,
+  contentManager->createHeap(gpu, gpuDesc.memRegions[deviceLocalMemType].memorytype_id, heapSize, 0,
                              nullptr, &rtRenderer_private::m_devLocalAllocations.memoryHeap);
   rtRenderer_private::m_devLocalAllocations.memoryTypeIndx   = deviceLocalMemType;
   rtRenderer_private::m_devLocalAllocations.memoryRegionSize = heapSize;
@@ -350,8 +356,10 @@ void createDeviceLocalResources() {
 void compileShadersandPipelines() {
   // Compile compute shader, create binding table type & compute pipeline
   {
-    const char* shaderText = filesys->funcs->read_textfile(
-      SOURCE_DIR "dependencies/TuranLibraries/shaders/firstComputeShader.comp");
+    const char* shaderText = ( const char* )filesys->funcs->read_textfile(
+      string_type_tapi_CHAR_U,
+      SOURCE_DIR "dependencies/TuranLibraries/shaders/firstComputeShader.comp",
+      string_type_tapi_CHAR_U);
     shaderSource_tgfxhnd firstComputeShader = nullptr;
     contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
                                         shaderStage_tgfx_COMPUTESHADER, ( void* )shaderText,
@@ -361,7 +369,8 @@ void compileShadersandPipelines() {
     tgfx_binding_table_description desc = {};
     desc.DescriptorType                 = shaderdescriptortype_tgfx_BUFFER;
     desc.ElementCount                   = 1;
-    desc.SttcSmplrs                     = nullptr;
+    desc.staticSamplers                 = nullptr;
+    desc.staticSamplerCount             = 0;
     desc.visibleStagesMask = shaderStage_tgfx_COMPUTESHADER | shaderStage_tgfx_VERTEXSHADER |
                              shaderStage_tgfx_FRAGMENTSHADER;
 
@@ -371,8 +380,8 @@ void compileShadersandPipelines() {
 
   // Compile default fragment shader
   {
-    const char* fragShaderText =
-      filesys->funcs->read_textfile(SOURCE_DIR "Content/firstShader.frag");
+    const char* fragShaderText = ( const char* )filesys->funcs->read_textfile(
+      string_type_tapi_CHAR_U, SOURCE_DIR "Content/firstShader.frag", string_type_tapi_CHAR_U);
     contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
                                         shaderStage_tgfx_FRAGMENTSHADER, ( void* )fragShaderText,
                                         strlen(fragShaderText), &fragShader);
@@ -388,20 +397,18 @@ void rtRenderer::initialize(tgfx_windowKeyCallback keyCB) {
   compileShadersandPipelines();
 
   renderer->createFences(gpu, 1, 0u, &fence);
-  gpuQueue_tgfxlsthnd queuesPerFam;
-  tgfx->helpers->getGPUInfo_Queues(gpu, 0, &queuesPerFam);
+  gpuQueue_tgfxhnd queuesPerFam[64];
+  uint32_t         queueCount = 0;
+  tgfx->helpers->getGPUInfo_Queues(gpu, 0, &queueCount, queuesPerFam);
+  tgfx->helpers->getGPUInfo_Queues(gpu, 0, &queueCount, queuesPerFam);
 
   queue             = queuesPerFam[0];
   uint64_t duration = 0;
   TURAN_PROFILE_SCOPE_MCS(profilerSys->funcs, "queueSignal", &duration);
-  waitFences[0] = fence;
-  waitFences[1] = ( fence_tgfxhnd )tgfx->INVALIDHANDLE;
-  renderer->queueFenceSignalWait(queue, {}, &waitValue, waitFences, &signalValue);
+  renderer->queueFenceSignalWait(queue, 0, nullptr, nullptr, 1, &fence, &signalValue);
   renderer->queueSubmit(queue);
 
   // Color Attachment Info for Begin Render Pass
-  standardDrawBundles[0] = standardDrawBundle;
-  standardDrawBundles[1] = ( commandBundle_tgfxhnd )tgfx->INVALIDHANDLE;
   {
     colorAttachmentInfo.imageAccess = image_access_tgfx_SHADER_SAMPLEWRITE;
     colorAttachmentInfo.loadOp      = rasterpassLoad_tgfx_CLEAR;
@@ -420,11 +427,11 @@ void rtRenderer::initialize(tgfx_windowKeyCallback keyCB) {
 
   // Binding table creation
   {
-    rtRenderer_private::m_camBindingDesc.DescriptorType    = shaderdescriptortype_tgfx_BUFFER;
-    rtRenderer_private::m_camBindingDesc.ElementCount      = 1;
-    rtRenderer_private::m_camBindingDesc.SttcSmplrs        = {};
-    rtRenderer_private::m_camBindingDesc.visibleStagesMask = shaderStage_tgfx_VERTEXSHADER;
-    rtRenderer_private::m_camBindingDesc.isDynamic         = true;
+    rtRenderer_private::m_camBindingDesc.DescriptorType     = shaderdescriptortype_tgfx_BUFFER;
+    rtRenderer_private::m_camBindingDesc.ElementCount       = 1;
+    rtRenderer_private::m_camBindingDesc.staticSamplerCount = 0;
+    rtRenderer_private::m_camBindingDesc.visibleStagesMask  = shaderStage_tgfx_VERTEXSHADER;
+    rtRenderer_private::m_camBindingDesc.isDynamic          = true;
 
     for (uint32_t i = 0; i < swapchainTextureCount; i++) {
       contentManager->createBindingTable(gpu, &rtRenderer_private::m_camBindingDesc,
@@ -444,37 +451,18 @@ void rtRenderer::initialize(tgfx_windowKeyCallback keyCB) {
       contentManager->setBindingTable_Buffer(
         rtRenderer_private::m_camBindingTables[i], 1, &bindingIndx,
         ( buffer_tgfxhnd* )&rtRenderer_private::m_gpuCamBuffer->resource, &bufferOffset,
-        &bufferSize, {});
+        &bufferSize, 0, {});
     }
   }
 
-  // Initialization Command Buffer Recording
-  commandBuffer_tgfxhnd initCmdBuffer = {};
-  {
-    initCmdBuffer                        = renderer->beginCommandBuffer(queue, nullptr);
-    commandBundle_tgfxhnd initBundles[2] = {initBundle,
-                                            ( commandBundle_tgfxhnd )tgfx->INVALIDHANDLE};
-    renderer->executeBundles(initCmdBuffer, initBundles, nullptr);
-    renderer->endCommandBuffer(initCmdBuffer);
-  }
-
-  // Submit initialization operations to GPU!
-  windowlst[0] = window;
-  windowlst[1] = ( window_tgfxhnd )tgfx->INVALIDHANDLE;
   {
     uint32_t swpchnIndx = UINT32_MAX;
-    tgfx->getCurrentSwapchainTextureIndex(window, &swpchnIndx);
-    if (initCmdBuffer) {
-      commandBuffer_tgfxhnd initCmdBuffers[2] = {initCmdBuffer,
-                                                 ( commandBuffer_tgfxhnd )tgfx->INVALIDHANDLE};
-      renderer->queueExecuteCmdBuffers(queue, initCmdBuffers, nullptr);
-      renderer->queueSubmit(queue);
-    }
-    renderer->queuePresent(queue, windowlst);
+    tgfx->getCurrentSwapchainTextureIndex(mainWindowRT, &swpchnIndx);
+    renderer->queuePresent(queue, 1, &mainWindowRT);
     renderer->queueSubmit(queue);
   }
 
-  STOP_PROFILE_PRINTFUL_TAPI(profilerSys->funcs);
+  STOP_PROFILE_TAPI(profilerSys->funcs);
   waitValue++;
   signalValue++;
 }
@@ -485,40 +473,34 @@ void rtRenderer::getSwapchainTexture() {
     printf("Waiting for fence value %u, currentFenceValue %u!\n", signalValue - 2,
            currentFenceValue);
   }
-  tgfx->getCurrentSwapchainTextureIndex(window, &rtRenderer_private::m_activeSwpchnIndx);
+  tgfx->getCurrentSwapchainTextureIndex(mainWindowRT, &rtRenderer_private::m_activeSwpchnIndx);
 }
 void rtRenderer::renderFrame() {
   {
-    commandBuffer_tgfxhnd uploadCmdBuffer = renderer->beginCommandBuffer(queue, {});
-    rtRenderer_private::m_uploadBundles.push_back(( commandBundle_tgfxhnd )tgfx->INVALIDHANDLE);
-    renderer->executeBundles(uploadCmdBuffer, rtRenderer_private::m_uploadBundles.data(), {});
+    commandBuffer_tgfxhnd uploadCmdBuffer = renderer->beginCommandBuffer(queue, 0, {});
+    renderer->executeBundles(uploadCmdBuffer, rtRenderer_private::m_uploadBundles.size(),
+                             rtRenderer_private::m_uploadBundles.data(), 0, {});
     renderer->endCommandBuffer(uploadCmdBuffer);
-    commandBuffer_tgfxhnd frameCmdBuffers[2] = {uploadCmdBuffer,
-                                                ( commandBuffer_tgfxhnd )tgfx->INVALIDHANDLE};
-    renderer->queueExecuteCmdBuffers(queue, frameCmdBuffers, nullptr);
+    renderer->queueExecuteCmdBuffers(queue, 1, &uploadCmdBuffer, 0, nullptr);
   }
   // Record & submit frame's scene render command buffer
   {
-    commandBundle_tgfxhnd frameCmdBundles[2] = {
-      perSwpchnCmdBundles[rtRenderer_private::m_activeSwpchnIndx],
-      ( commandBundle_tgfxhnd )tgfx->INVALIDHANDLE};
-    commandBuffer_tgfxhnd frameCmdBuffer = renderer->beginCommandBuffer(queue, nullptr);
+    commandBuffer_tgfxhnd frameCmdBuffer = renderer->beginCommandBuffer(queue, 0, nullptr);
     colorAttachmentInfo.texture          = swpchnTextures[rtRenderer_private::m_activeSwpchnIndx];
-    renderer->beginRasterpass(frameCmdBuffer, 1, &colorAttachmentInfo, depthAttachmentInfo, {});
-    rtRenderer_private::m_renderBundles.push_back(( commandBundle_tgfxhnd )tgfx->INVALIDHANDLE);
-    renderer->executeBundles(frameCmdBuffer, rtRenderer_private::m_renderBundles.data(), nullptr);
-    renderer->endRasterpass(frameCmdBuffer, {});
+    renderer->beginRasterpass(frameCmdBuffer, 1, &colorAttachmentInfo, depthAttachmentInfo, 0,
+                              nullptr);
+    renderer->executeBundles(frameCmdBuffer, rtRenderer_private::m_renderBundles.size(),
+                             rtRenderer_private::m_renderBundles.data(), 0, nullptr);
+    renderer->endRasterpass(frameCmdBuffer, 0, nullptr);
     renderer->endCommandBuffer(frameCmdBuffer);
 
-    commandBuffer_tgfxhnd frameCmdBuffers[2] = {frameCmdBuffer,
-                                                ( commandBuffer_tgfxhnd )tgfx->INVALIDHANDLE};
-    renderer->queueExecuteCmdBuffers(queue, frameCmdBuffers, nullptr);
-    renderer->queueFenceSignalWait(queue, {}, &waitValue, waitFences, &signalValue);
+    renderer->queueExecuteCmdBuffers(queue, 1, &frameCmdBuffer, 0, nullptr);
+    renderer->queueFenceSignalWait(queue, 1, &fence, &waitValue, 1, &fence, &signalValue);
     renderer->queueSubmit(queue);
   }
   waitValue++;
   signalValue++;
-  renderer->queuePresent(queue, windowlst);
+  renderer->queuePresent(queue, 1, &mainWindowRT);
   renderer->queueSubmit(queue);
 
   rtRenderer_private::m_uploadBundles.clear();
@@ -533,7 +515,7 @@ void rtRenderer::getRTFormats(rasterPipelineDescription_tgfx* rasterPipeDesc) {
 }
 unsigned int rtRenderer::getFrameIndx() { return rtRenderer_private::m_activeSwpchnIndx; }
 void         rtRenderer::upload(commandBundle_tgfxhnd uploadBundle) {
-          rtRenderer_private::m_uploadBundles.push_back(uploadBundle);
+  rtRenderer_private::m_uploadBundles.push_back(uploadBundle);
 }
 void rtRenderer::render(commandBundle_tgfxhnd renderBundle) {
   rtRenderer_private::m_renderBundles.push_back(renderBundle);
@@ -545,9 +527,7 @@ void rtRenderer::close() {
   while (fenceVal != waitValue) {
     renderer->getFenceValue(fence, &fenceVal);
   }
-  contentManager->destroyPipeline(firstRasterPipeline);
   contentManager->destroyPipeline(firstComputePipeline);
-  contentManager->destroyBindingTable(bufferBindingTable);
   renderer->destroyFence(fence);
 }
 
@@ -562,14 +542,14 @@ struct camUbo {
   glm::mat4 view;
   glm::mat4 proj;
 };
-camUbo* cams = {};
-
-void rtRenderer::setActiveFrameCamProps(glm::mat4 view, glm::mat4 proj) {
+camUbo*          cams = {};
+extern glm::mat4 getGLMMAT4(rtMat4 src);
+void             rtRenderer::setActiveFrameCamProps(const rtMat4* view, const rtMat4* proj) {
   if (!cams) {
     cams = ( camUbo* )getBufferMappedMemPtr(rtRenderer_private::m_gpuCamBuffer);
   }
-  cams[rtRenderer_private::m_activeSwpchnIndx].view = view;
-  cams[rtRenderer_private::m_activeSwpchnIndx].proj = proj;
+  cams[rtRenderer_private::m_activeSwpchnIndx].view = getGLMMAT4(*view);
+  cams[rtRenderer_private::m_activeSwpchnIndx].proj = getGLMMAT4(*proj);
 }
 
 bindingTable_tgfxhnd rtRenderer::getActiveCamBindingTable() {

@@ -19,3 +19,8 @@ extern ecs_tapi*                   editorECS;
 
 enum class result_editor { SUCCESS, CRASH, FAIL };
 void printer_editor(result_editor result, const char* log);
+
+
+typedef struct mat4_rt {
+  float v[16];
+} rtMat4;

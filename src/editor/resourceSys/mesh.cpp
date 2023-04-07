@@ -3,6 +3,7 @@
 #include <assimp/Importer.hpp>
 #include <glm/glm.hpp>
 #include <vector>
+#include <string_tapi.h>
 #include <filesys_tapi.h>
 #include <tgfx_core.h>
 #include <tgfx_forwarddeclarations.h>
@@ -29,7 +30,7 @@ struct rtMeshManager_private {
   static bindingTableDescription_tgfx       transformBindingDesc;
   static bindingTable_tgfxhnd               transformBindingTables[swapchainTextureCount];
   static indirectOperationType_tgfx         operationList[RT_MAXDEFAULTMESH_MESHCOUNT];
-  static commandBundle_tgfxhnd              m_bundles[swapchainTextureCount];
+  static std::vector<commandBundle_tgfxhnd>              m_bundles[swapchainTextureCount];
 
   static bool deserializeMesh(rtResourceDesc* desc) { return false; }
   static bool isMeshValid(void* dataHnd) { return false; }
@@ -45,7 +46,7 @@ pipeline_tgfxhnd                   rtMeshManager_private::defaultPipeline       
 bindingTableDescription_tgfx       rtMeshManager_private::transformBindingDesc               = {};
 bindingTable_tgfxhnd rtMeshManager_private::transformBindingTables[swapchainTextureCount]    = {};
 indirectOperationType_tgfx rtMeshManager_private::operationList[RT_MAXDEFAULTMESH_MESHCOUNT] = {};
-commandBundle_tgfxhnd      rtMeshManager_private::m_bundles[swapchainTextureCount];
+std::vector<commandBundle_tgfxhnd>      rtMeshManager_private::m_bundles[swapchainTextureCount];
 
 struct mesh_rt {
   uint32_t m_gpuVertexOffset = 0, m_gpuIndexOffset = 0;
@@ -104,7 +105,7 @@ void meshManager_rt::uploadMesh(rtMesh mesh) {
     return;
   }
 
-  commandBundle_tgfxhnd copyBundle = renderer->beginCommandBundle(gpu, 2, {}, {});
+  commandBundle_tgfxhnd copyBundle = renderer->beginCommandBundle(gpu, 2, nullptr, 0, nullptr);
   renderer->cmdCopyBufferToBuffer(
     copyBundle, 0, mesh->m_vertexCount * sizeof(rtVertex),
     rtRenderer::getBufferTgfxHnd(mesh->m_stagingBlock), 0,
@@ -115,7 +116,7 @@ void meshManager_rt::uploadMesh(rtMesh mesh) {
     rtRenderer::getBufferTgfxHnd(mesh->m_stagingBlock), mesh->m_vertexCount * sizeof(rtVertex),
     rtRenderer::getBufferTgfxHnd(rtMeshManager_private::gpuIndexBuffer),
     mesh->m_gpuIndexOffset * sizeof(uint32_t));
-  renderer->finishCommandBundle(copyBundle, {});
+  renderer->finishCommandBundle(copyBundle, 0, nullptr);
   rtMeshManager_private::uploadBundleList.push_back(copyBundle);
 }
 
@@ -165,8 +166,12 @@ struct renderList {
 commandBundle_tgfxhnd meshManager_rt::render(unsigned int count, renderInfo* const infos) {
   uint32_t frameIndx = rtRenderer::getFrameIndx();
 
-  if (rtMeshManager_private::m_bundles[frameIndx]) {
-    renderer->destroyCommandBundle(rtMeshManager_private::m_bundles[frameIndx]);
+  if (rtMeshManager_private::m_bundles[frameIndx].size()) {
+    for (commandBundle_tgfxhnd bndle : rtMeshManager_private::m_bundles[frameIndx]) {
+      printf("Destroyed: %p", bndle);
+      renderer->destroyCommandBundle(bndle);
+    }
+    printf("\n");
   }
 
   // Create render list to fill binding tables
@@ -231,7 +236,7 @@ commandBundle_tgfxhnd meshManager_rt::render(unsigned int count, renderInfo* con
     }
     contentManager->setBindingTable_Buffer(rtMeshManager_private::transformBindingTables[frameIndx],
                                            RT_MAXDEFAULTMESH_MESHCOUNT, batchIndices, batchBuffers,
-                                           batchOffsets, batchSizes, {});
+                                           batchOffsets, batchSizes, 0, nullptr);
   }
 
   // 1 pipeline, 2 binding tables (same call), 1 vertex buffer, 1 index buffer & 1 indirect indexed
@@ -239,11 +244,11 @@ commandBundle_tgfxhnd meshManager_rt::render(unsigned int count, renderInfo* con
   static constexpr uint32_t cmdCount = 8;
 
   commandBundle_tgfxhnd bundle =
-    renderer->beginCommandBundle(gpu, cmdCount, rtMeshManager_private::defaultPipeline, {});
+    renderer->beginCommandBundle(gpu, cmdCount, rtMeshManager_private::defaultPipeline, 0, nullptr);
   uint32_t             cmdIndx          = 0;
-  bindingTable_tgfxhnd bindingTables[3] = {rtRenderer::getActiveCamBindingTable(),
-                                           rtMeshManager_private::transformBindingTables[frameIndx],
-                                           ( bindingTable_tgfxhnd )tgfx->INVALIDHANDLE};
+  bindingTable_tgfxhnd bindingTables[2] = {
+    rtRenderer::getActiveCamBindingTable(),
+    rtMeshManager_private::transformBindingTables[frameIndx]};
   renderer->cmdSetDepthBounds(bundle, cmdIndx++, 0.0f, 1.0f);
   renderer->cmdSetScissor(bundle, cmdIndx++, {0, 0}, {1280, 720});
   viewportInfo_tgfx viewport;
@@ -252,7 +257,7 @@ commandBundle_tgfxhnd meshManager_rt::render(unsigned int count, renderInfo* con
   viewport.topLeftCorner = {0, 0};
   renderer->cmdSetViewport(bundle, cmdIndx++, viewport);
   renderer->cmdBindPipeline(bundle, cmdIndx++, rtMeshManager_private::defaultPipeline);
-  renderer->cmdBindBindingTables(bundle, cmdIndx++, bindingTables, 0, pipelineType_tgfx_RASTER);
+  renderer->cmdBindBindingTables(bundle, cmdIndx++, 0, 2, bindingTables, pipelineType_tgfx_RASTER);
   uint64_t       offset     = 0;
   buffer_tgfxhnd vertBuffer = rtRenderer::getBufferTgfxHnd(rtMeshManager_private::gpuVertexBuffer),
                  indxBuffer = rtRenderer::getBufferTgfxHnd(rtMeshManager_private::gpuIndexBuffer),
@@ -261,11 +266,13 @@ commandBundle_tgfxhnd meshManager_rt::render(unsigned int count, renderInfo* con
   renderer->cmdBindVertexBuffers(bundle, cmdIndx++, 0, 1, &vertBuffer, &offset);
   renderer->cmdBindIndexBuffer(bundle, cmdIndx++, indxBuffer, 0, 4);
   renderer->cmdExecuteIndirect(bundle, cmdIndx++, renders.size(),
-                               rtMeshManager_private::operationList, indirectBuffer, 0, {});
+                               rtMeshManager_private::operationList, indirectBuffer, 0, 0, nullptr);
   assert(cmdIndx <= cmdCount && "Cmd count is exceeded!");
-  renderer->finishCommandBundle(bundle, {});
+  renderer->finishCommandBundle(bundle, 0, nullptr);
 
-  rtMeshManager_private::m_bundles[frameIndx] = bundle;
+  rtMeshManager_private::m_bundles[frameIndx] = rtMeshManager_private::uploadBundleList;
+  rtMeshManager_private::uploadBundleList.clear();
+  rtMeshManager_private::m_bundles[frameIndx].push_back(bundle);
   return bundle;
 }
 void meshManager_rt::frame() {
@@ -306,7 +313,7 @@ void rtMeshManager::initializeManager() {
   shaderSource_tgfxhnd firstVertShader;
   {
     const char* vertShaderText =
-      filesys->funcs->read_textfile(SOURCE_DIR "Content/firstShader.vert");
+      (const char*)filesys->funcs->read_textfile(string_type_tapi_CHAR_U, SOURCE_DIR "Content/firstShader.vert", string_type_tapi_CHAR_U);
     contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
                                         shaderStage_tgfx_VERTEXSHADER, ( void* )vertShaderText,
                                         strlen(vertShaderText), &firstVertShader);
@@ -314,12 +321,12 @@ void rtMeshManager::initializeManager() {
 
   // Create binding types
   {
-    rtMeshManager_private::transformBindingDesc = {};
+    rtMeshManager_private::transformBindingDesc                = {};
     rtMeshManager_private::transformBindingDesc.DescriptorType = shaderdescriptortype_tgfx_BUFFER;
     rtMeshManager_private::transformBindingDesc.ElementCount   = RT_MAXDEFAULTMESH_MESHCOUNT;
-    rtMeshManager_private::transformBindingDesc.SttcSmplrs     = {};
-    rtMeshManager_private::transformBindingDesc.visibleStagesMask = shaderStage_tgfx_VERTEXSHADER;
-    rtMeshManager_private::transformBindingDesc.isDynamic         = true;
+    rtMeshManager_private::transformBindingDesc.staticSamplerCount = 0;
+    rtMeshManager_private::transformBindingDesc.visibleStagesMask  = shaderStage_tgfx_VERTEXSHADER;
+    rtMeshManager_private::transformBindingDesc.isDynamic          = true;
   }
 
   // Compile pipeline
@@ -366,7 +373,8 @@ void rtMeshManager::initializeManager() {
     rtRenderer::getRTFormats(&pipelineDesc);
     pipelineDesc.mainStates                = &stateDesc;
     shaderSource_tgfxhnd shaderSources[2]  = {firstVertShader, rtRenderer::getDefaultFragShader()};
-    pipelineDesc.shaderSourceList          = shaderSources;
+    pipelineDesc.shaderCount               = 2;
+    pipelineDesc.shaders                   = shaderSources;
     pipelineDesc.attribLayout.attribCount  = 3;
     pipelineDesc.attribLayout.bindingCount = 1;
     pipelineDesc.attribLayout.i_attributes = attribs;
@@ -376,8 +384,7 @@ void rtMeshManager::initializeManager() {
     pipelineDesc.tables                          = bindingTypes;
     pipelineDesc.tableCount                      = 2;
 
-    contentManager->createRasterPipeline(&pipelineDesc, nullptr,
-                                         &rtMeshManager_private::defaultPipeline);
+    contentManager->createRasterPipeline(&pipelineDesc, &rtMeshManager_private::defaultPipeline);
     contentManager->destroyShaderSource(firstVertShader);
   }
 

@@ -4,6 +4,7 @@ set(CMAKE_TOOLCHAIN_FILE "D:/dev/Extras/vcpkg/scripts/buildsystems/vcpkg.cmake")
 include("D:/dev/Extras/vcpkg/scripts/buildsystems/vcpkg.cmake")
 
 project ("TuranRT")
+set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 17)
 add_subdirectory("src")
 add_subdirectory("dependencies/TuranLibraries")

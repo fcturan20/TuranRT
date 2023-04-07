@@ -1,8 +1,8 @@
 #pragma once
 static constexpr unsigned int swapchainTextureCount = 2;
-static constexpr unsigned int INIT_GPUINDEX         = 0;
 // Include tgfx_forwardDeclarations.h & glm/glm.hpp before including this
 
+typedef struct mat4_rt rtMat4;
 struct gpuMemBlock_rt;
 typedef struct gpuMemBlock_rt*                  rtGpuMemBlock;
 typedef struct tgfx_raster_pipeline_description rasterPipelineDescription_tgfx;
@@ -11,7 +11,7 @@ struct rtRenderer {
   static rtGpuMemBlock allocateMemoryBlock(bufferUsageMask_tgfxflag flag, uint64_t size,
                                            regionType memType = UNDEF);
   static void          deallocateMemoryBlock(rtGpuMemBlock memBlock);
-  static void          setActiveFrameCamProps(glm::mat4 view, glm::mat4 proj);
+  static void          setActiveFrameCamProps(const rtMat4* view, const rtMat4* proj);
 
   // Renderer execute uploadBundle at the beginning of the frame.
   // No caching, so user should call it every frame.
@@ -39,3 +39,5 @@ struct gpuStorageBuffer_rt;
 typedef struct gpuStorageBuffer_rt* rtGpuStorageBuffer;
 typedef struct storagerenderer_rt {
 } rtStorageRenderer;
+
+extern window_tgfxhnd mainWindowRT;

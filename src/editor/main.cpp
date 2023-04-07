@@ -20,17 +20,20 @@
 #include "render_context/rendercontext.h"
 #include "resourceSys/mesh.h"
 #include "resourceSys/scene.h"
+#include "systems/input.h"
+#include "systems/camera.h"
 
 // TuranLibraries headers
 #include "TuranLibraries/editor/main.h"
 #include "TuranLibraries/editor/pecfManager/pecfManager.h"
 #include "allocator_tapi.h"
-#include "array_of_strings_tapi.h"
+#include "string_tapi.h"
 #include "ecs_tapi.h"
 #include "filesys_tapi.h"
 #include "logger_tapi.h"
 #include "profiler_tapi.h"
 #include "threadingsys_tapi.h"
+#include "bitset_tapi.h"
 #include "tgfx_core.h"
 
 allocator_sys_tapi*            allocatorSys = {};
@@ -38,11 +41,19 @@ tgfx_core*                     tgfx         = {};
 FILESYS_TAPI_PLUGIN_LOAD_TYPE  filesys      = {};
 PROFILER_TAPI_PLUGIN_LOAD_TYPE profilerSys  = {};
 
+uint32_t findFirst(std::vector<bool>& stdBitset, bool isTrue) {
+  for (uint32_t i = 0; i < stdBitset.size(); i++) {
+    if (stdBitset[i] == isTrue) {
+      return i;
+    }
+  }
+  return UINT32_MAX;
+}
+
 void load_plugins() {
   pluginHnd_ecstapi threadingPlugin = editorECS->loadPlugin("tapi_threadedjobsys.dll");
   auto              threadingSys =
     ( THREADINGSYS_TAPI_PLUGIN_LOAD_TYPE )editorECS->getSystem(THREADINGSYS_TAPI_PLUGIN_NAME);
-  printf("Thread Count: %u\n", threadingSys->funcs->thread_count());
 
   pluginHnd_ecstapi arrayOfStringsPlugin = editorECS->loadPlugin("tapi_array_of_strings_sys.dll");
   auto              AoSsys =
@@ -57,6 +68,9 @@ void load_plugins() {
   pluginHnd_ecstapi loggerPlugin = editorECS->loadPlugin("tapi_logger.dll");
   auto loggerSys = ( LOGGER_TAPI_PLUGIN_LOAD_TYPE )editorECS->getSystem(LOGGER_TAPI_PLUGIN_NAME);
 
+  pluginHnd_ecstapi bitsetPlugin = editorECS->loadPlugin("tapi_bitset.dll");
+  auto bitsetSys = ( BITSET_TAPI_PLUGIN_LOAD_TYPE )editorECS->getSystem(BITSET_TAPI_PLUGIN_NAME);
+
   allocatorSys =
     ( ALLOCATOR_TAPI_PLUGIN_LOAD_TYPE )editorECS->getSystem(ALLOCATOR_TAPI_PLUGIN_NAME);
 
@@ -67,93 +81,50 @@ void load_plugins() {
       tgfx = tgfxSys->api;
     }
   }
+
+  // TO-DO: Move this to tapi_bitset's itself as unit test
+  {
+    static constexpr uint32_t bitsetByteLength = 10 << 10;
+    std::vector<bool>         stdBitset(bitsetByteLength * 8, false);
+    bitset_tapi              tBitset = bitsetSys->funcs->createBitset(bitsetByteLength);
+
+    time_t t;
+    srand(( unsigned )time(&t));
+    for (uint32_t i = 0; i < bitsetByteLength * 8; i++) {
+      uint32_t bit   = rand() % (bitsetByteLength * 8);
+      bool     v     = rand() % 2;
+      stdBitset[bit] = v;
+      bitsetSys->funcs->setBit(tBitset, bit, v);
+    }
+    if (findFirst(stdBitset, true) != bitsetSys->funcs->getFirstBitIndx(tBitset, true) ||
+        findFirst(stdBitset, false) != bitsetSys->funcs->getFirstBitIndx(tBitset, false)) {
+      printf("Firsts not match!");
+      exit(-1);
+    }
+    for (uint32_t i = 0; i < bitsetByteLength * 8; i++) {
+      unsigned char tapiV = bitsetSys->funcs->getBitValue(tBitset, i);
+      unsigned char stdV  = stdBitset[i];
+      if (stdV != tapiV) {
+        printf("Index %d is not matching!\n", i);
+      }
+    }
+  }
 }
-
-glm::vec3 camPos(0, 0, 0);
-glm::vec3 camTarget(0, 0, 1);
-glm::vec3 world_up(0, 1, 0);
-glm::vec3 frontVector = glm::normalize(camTarget);
-glm::vec3 rightVector = -glm::normalize(glm::cross(world_up, frontVector));
-
-// This Component doesn't use ROTATION and SCALE components of GameComponent!
-// Instead, you will specify the target vector of camera to look at
-struct Camera_Component {
-  glm::vec3      POSITION, ROTATION, SCALE;
-  glm::mat4      View_Matrix, Projection_Matrix;
-  unsigned short FOV_in_Angle = 45, Aspect_Width = 1920.0f, Aspect_Height = 1080.0f;
-  float          Near_Plane = 0.01f, Far_Plane = 100000.0f;
-  bool           is_Projection_Matrix_changed = true, is_Target_Changed = true;
-  glm::vec3      Target;
-
- public:
-  Camera_Component(glm::vec3 target);
-
-  // Getters
-  glm::mat4x4 Calculate_Projection_Matrix() {
-    if (is_Projection_Matrix_changed) {
-      glm::mat4x4 proj_mat;
-      proj_mat                     = glm::perspective(glm::radians(float(FOV_in_Angle)),
-                                                      float(Aspect_Width / Aspect_Height), Near_Plane, Far_Plane);
-      Projection_Matrix            = proj_mat;
-      is_Projection_Matrix_changed = false;
-    }
-    return Projection_Matrix;
-  }
-  glm::mat4x4 Calculate_View_Matrix() {
-    if (true) {
-      glm::mat4x4 view_mat;
-      glm::vec3   Front_Vector = -Target;
-      glm::vec3   World_UP     = glm::vec3(0, 1, 0);
-
-      view_mat    = glm::lookAt(POSITION, Front_Vector + POSITION, World_UP);
-      View_Matrix = view_mat;
-    }
-    return View_Matrix;
-  }
-
-  // Setters
-  void Set_Camera_Properties(unsigned short fov_in_Angle, float aspect_Width, float aspect_Height,
-                             float near_plane, float far_plane) {
-    FOV_in_Angle                 = fov_in_Angle;
-    Aspect_Width                 = aspect_Width;
-    Aspect_Height                = aspect_Height;
-    Near_Plane                   = near_plane;
-    Far_Plane                    = far_plane;
-    is_Projection_Matrix_changed = true;
-  }
-};
-float camYaw = 0.0f;
-
-void keyCB(window_tgfxhnd windowHnd, void* userPointer, key_tgfx key, int scanCode,
-           key_action_tgfx action, keyMod_tgfx mode) {
-  switch (key) {
-    case key_tgfx_A: camPos -= rightVector; break;
-    case key_tgfx_S: camPos -= frontVector; break;
-    case key_tgfx_W: camPos += frontVector; break;
-    case key_tgfx_D: camPos += rightVector; break;
-    case key_tgfx_RIGHT: camYaw += 1.0f; break;
-    case key_tgfx_LEFT: camYaw -= 1.0f; break;
-  }
-  // camYaw    = glm::max(-89.0f, glm::min(camYaw, 89.0f));
-  camTarget.x = glm::cos(glm::radians(0.0)) * glm::cos(glm::radians(camYaw));
-  camTarget.y = glm::sin(glm::radians(0.0));
-  camTarget.z = glm::cos(glm::radians(0.0)) * glm::sin(glm::radians(camYaw));
-};
 
 void load_systems() {
   load_plugins();
 
-  rtRenderer::initialize(keyCB);
+  rtRenderer::initialize(rtInputSystem::getCallback());
   rtMeshManager::initializeManager();
   rtSceneManager::initializeManager();
 
   uint64_t    resourceCount  = {};
-  rtResource* firstResources = rtResourceManager::importAssimp(
-    //SOURCE_DIR "Content/cube.glb"
+  rtResource* firstResources = rtResourceManager::importAssimp( // SOURCE_DIR "Content/cube.glb"
     SOURCE_DIR "Content/gun.glb"
-    , &resourceCount
-  );
-  rtScene  firstScene = {};
+    //"D:\\Desktop\\Meshes\\Bakery\\scene.gltf"
+    ,
+    &resourceCount);
+  rtScene     firstScene     = {};
   for (uint32_t resourceIndx = 0; resourceIndx < resourceCount; resourceIndx++) {
     rtResourceManagerType type = {};
     void* resHnd = rtResourceManager::getResourceHnd(firstResources[resourceIndx], type);
@@ -162,28 +133,25 @@ void load_systems() {
     }
   }
 
+  rtCamera cam = rtCameraController::createCamera(true);
+  rtCameraController::setActiveCamera(cam);
+  tgfx_vec2 res = {1920.0, 1080.0f};
+  float     fov = 45.0f, nearPlane = 0.01f, farPlane = 100.0f, mouseSensitivity = 0.1f;
+  rtCameraController::setCameraProps(cam, &res, &nearPlane, &farPlane, &mouseSensitivity, &fov);
 
   int      i        = 0;
   uint64_t duration = {};
-  while (++i && i < 1000000) {
+  while (++i && i < 10000) {
     profiledscope_handle_tapi frameScope = {};
     profilerSys->funcs->start_profiling(&frameScope, "Frame Duration", &duration, 1);
-    TURAN_PROFILE_SCOPE_MCS(profilerSys->funcs, "Frame", &duration);
+    rtInputSystem::update();
+    rtCameraController::update();
     rtRenderer::getSwapchainTexture();
-
-    frontVector         = glm::normalize(camTarget);
-    rightVector         = -glm::normalize(glm::cross(world_up, frontVector));
-    glm::vec3 UP_VECTOR = -glm::normalize(glm::cross(frontVector, rightVector));
-    rtRenderer::setActiveFrameCamProps(
-      glm::lookAt(camPos, camPos + frontVector, world_up),
-      glm::perspective(glm::radians(45.0f), 16.0f / 9.0f, 0.01f, 100.0f));
 
     rtMeshManager::frame();
     rtSceneModifier::renderScene(firstScene);
     rtRenderer::renderFrame();
-    tgfx->takeInputs();
-    profilerSys->funcs->finish_profiling(&frameScope, false);
-    STOP_PROFILE_PRINTFUL_TAPI(profilerSys->funcs);
+    profilerSys->funcs->finish_profiling(&frameScope);
     printf("Frame index: %u, duration: %u\n\n\n", i, duration);
   }
 

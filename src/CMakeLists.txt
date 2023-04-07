@@ -1,4 +1,4 @@
-file(GLOB_RECURSE EDITORFILES "editor/*.cpp" "editor/*.h" "editor/*.c" "filesys/*.cpp" "filesys/*.h" "filesys/*.c")
+file(GLOB_RECURSE EDITORFILES "editor/*.cpp" "editor/*.h" "editor/*.c")
 add_executable(RTEditor ${EDITORFILES} ${VKFILES} ${TAPIFILES})
 set_target_properties(RTEditor PROPERTIES RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/Debug ARCHIVE_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/Debug)
 set_target_properties(RTEditor PROPERTIES RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/Release ARCHIVE_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/Release PREFIX "")
