@@ -356,10 +356,10 @@ void createDeviceLocalResources() {
 void compileShadersandPipelines() {
   // Compile compute shader, create binding table type & compute pipeline
   {
-    const char* shaderText = ( const char* )filesys->funcs->read_textfile(
-      string_type_tapi_CHAR_U,
+    const char* shaderText = ( const char* )fileSys->funcs->read_textfile(
+      string_type_tapi_UTF8,
       SOURCE_DIR "dependencies/TuranLibraries/shaders/firstComputeShader.comp",
-      string_type_tapi_CHAR_U);
+      string_type_tapi_UTF8);
     shaderSource_tgfxhnd firstComputeShader = nullptr;
     contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
                                         shaderStage_tgfx_COMPUTESHADER, ( void* )shaderText,
@@ -380,8 +380,8 @@ void compileShadersandPipelines() {
 
   // Compile default fragment shader
   {
-    const char* fragShaderText = ( const char* )filesys->funcs->read_textfile(
-      string_type_tapi_CHAR_U, SOURCE_DIR "Content/firstShader.frag", string_type_tapi_CHAR_U);
+    const char* fragShaderText = ( const char* )fileSys->funcs->read_textfile(
+      string_type_tapi_UTF8, SOURCE_DIR "Content/firstShader.frag", string_type_tapi_UTF8);
     contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
                                         shaderStage_tgfx_FRAGMENTSHADER, ( void* )fragShaderText,
                                         strlen(fragShaderText), &fragShader);

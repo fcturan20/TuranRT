@@ -38,7 +38,7 @@
 
 allocator_sys_tapi*            allocatorSys = {};
 tgfx_core*                     tgfx         = {};
-FILESYS_TAPI_PLUGIN_LOAD_TYPE  filesys      = {};
+FILESYS_TAPI_PLUGIN_LOAD_TYPE  fileSys      = {};
 PROFILER_TAPI_PLUGIN_LOAD_TYPE profilerSys  = {};
 
 uint32_t findFirst(std::vector<bool>& stdBitset, bool isTrue) {
@@ -63,7 +63,7 @@ void load_plugins() {
   profilerSys = ( PROFILER_TAPI_PLUGIN_LOAD_TYPE )editorECS->getSystem(PROFILER_TAPI_PLUGIN_NAME);
 
   pluginHnd_ecstapi filesysPlugin = editorECS->loadPlugin("tapi_filesys.dll");
-  filesys = ( FILESYS_TAPI_PLUGIN_LOAD_TYPE )editorECS->getSystem(FILESYS_TAPI_PLUGIN_NAME);
+  fileSys = ( FILESYS_TAPI_PLUGIN_LOAD_TYPE )editorECS->getSystem(FILESYS_TAPI_PLUGIN_NAME);
 
   pluginHnd_ecstapi loggerPlugin = editorECS->loadPlugin("tapi_logger.dll");
   auto loggerSys = ( LOGGER_TAPI_PLUGIN_LOAD_TYPE )editorECS->getSystem(LOGGER_TAPI_PLUGIN_NAME);

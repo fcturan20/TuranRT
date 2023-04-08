@@ -5,7 +5,7 @@ extern allocator_sys_tapi* allocatorSys;
 typedef struct tgfx_core   core_tgfx;
 extern tgfx_core*          tgfx;
 typedef struct filesys_tapi_type;
-extern filesys_tapi_type* filesys;
+extern filesys_tapi_type* fileSys;
 typedef struct profiler_tapi_type;
 extern profiler_tapi_type*         profilerSys;
 typedef struct tgfx_renderer       renderer_tgfx;

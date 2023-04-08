@@ -54,4 +54,4 @@ target_link_libraries(RTEditor PRIVATE HLSL SPIRV glslang OGLCompiler)
 
 
 target_include_directories(RTEditor PUBLIC ${CMAKE_SOURCE_DIR}/dependencies)
-target_link_libraries(RTEditor PRIVATE tgfx_core TGFXVulkan TGFXVulkanGlslang tapi_ecs tapi_array_of_strings_sys tapi_bitset tapi_filesys tapi_logger tapi_profiler tapi_threadedjobsys tapi_unittest)
+target_link_libraries(RTEditor PRIVATE tgfx_core TGFXVulkan TGFXVulkanGlslang tapi_ecs tapi_string tapi_bitset tapi_filesys tapi_logger tapi_profiler tapi_threadedjobsys tapi_unittest)
