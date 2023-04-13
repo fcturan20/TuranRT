@@ -1,17 +1,19 @@
+#include <vector>
+
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 #include <assimp/Importer.hpp>
 #include <glm/glm.hpp>
-#include <vector>
+
 #include <string_tapi.h>
 #include <filesys_tapi.h>
+#include <logger_tapi.h>
 #include <tgfx_core.h>
 #include <tgfx_forwarddeclarations.h>
 #include <tgfx_renderer.h>
 #include <tgfx_gpucontentmanager.h>
 #include <tgfx_structs.h>
 
-#include <tgfx_structs.h>
 #include "../render_context/rendercontext.h"
 #include "resourceManager.h"
 #include "../editor_includes.h"
@@ -168,7 +170,7 @@ commandBundle_tgfxhnd meshManager_rt::render(unsigned int count, renderInfo* con
 
   if (rtMeshManager_private::m_bundles[frameIndx].size()) {
     for (commandBundle_tgfxhnd bndle : rtMeshManager_private::m_bundles[frameIndx]) {
-      printf("Destroyed: %p", bndle);
+      logSys->log(log_type_tapi_STATUS, false, L"Destroyed command bundle; %p", bndle);
       renderer->destroyCommandBundle(bndle);
     }
     printf("\n");

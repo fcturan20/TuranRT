@@ -50,7 +50,7 @@ endif()
 
 #To compile glsl shaders to SPIR-V in run-time
 find_package(glslang CONFIG REQUIRED)
-target_link_libraries(RTEditor PRIVATE HLSL SPIRV glslang OGLCompiler)
+target_link_libraries(RTEditor PRIVATE glslang::OSDependent glslang::glslang glslang::MachineIndependent glslang::GenericCodeGen glslang::glslang-default-resource-limits glslang::OGLCompiler glslang::SPVRemapper glslang::SPIRV glslang::HLSL)
 
 
 target_include_directories(RTEditor PUBLIC ${CMAKE_SOURCE_DIR}/dependencies)

@@ -5,6 +5,7 @@
 #include <filesys_tapi.h>
 #include <string_tapi.h>
 #include <profiler_tapi.h>
+#include <logger_tapi.h>
 
 #include <tgfx_core.h>
 #include <tgfx_gpucontentmanager.h>
@@ -240,7 +241,8 @@ void createGPU() {
   GPU_INDEX = glm::min(gpuCount - 1, GPU_INDEX);
   gpu       = GPUs[GPU_INDEX];
   tgfx->helpers->getGPUInfo_General(gpu, &gpuDesc);
-  printf("\n\nGPU Name: %s\n  Queue Fam Count: %u\n", gpuDesc.name, gpuDesc.queueFamilyCount);
+  logSys->log(log_type_tapi_STATUS, false, L"GPU Name: %v\n Queue Family Count: %u\n\n",
+              gpuDesc.name, gpuDesc.queueFamilyCount);
   tgfx->initGPU(gpu);
 }
 
@@ -253,7 +255,7 @@ void createFirstWindow(tgfx_windowKeyCallback keyCB) {
     // Get monitor list
     tgfx->getMonitorList(&monitorCount, monitorList);
     tgfx->getMonitorList(&monitorCount, monitorList);
-    printf("Monitor Count: %u\n", monitorCount);
+    logSys->log(log_type_tapi_STATUS, false, L"Monitor count: %u", monitorCount);
     mainMonitor = monitorList[0];
   }
 
@@ -404,7 +406,7 @@ void rtRenderer::initialize(tgfx_windowKeyCallback keyCB) {
 
   queue             = queuesPerFam[0];
   uint64_t duration = 0;
-  TURAN_PROFILE_SCOPE_MCS(profilerSys->funcs, "queueSignal", &duration);
+  TURAN_PROFILE_SCOPE_MCS(profilerSys, "queueSignal", &duration);
   renderer->queueFenceSignalWait(queue, 0, nullptr, nullptr, 1, &fence, &signalValue);
   renderer->queueSubmit(queue);
 
@@ -462,7 +464,7 @@ void rtRenderer::initialize(tgfx_windowKeyCallback keyCB) {
     renderer->queueSubmit(queue);
   }
 
-  STOP_PROFILE_TAPI(profilerSys->funcs);
+  STOP_PROFILE_TAPI(profilerSys);
   waitValue++;
   signalValue++;
 }
@@ -470,8 +472,8 @@ void rtRenderer::getSwapchainTexture() {
   uint64_t currentFenceValue = 0;
   while (currentFenceValue < signalValue - 2) {
     renderer->getFenceValue(fence, &currentFenceValue);
-    printf("Waiting for fence value %u, currentFenceValue %u!\n", signalValue - 2,
-           currentFenceValue);
+    logSys->log(log_type_tapi_STATUS, false, L"Waiting for fence value %u, currentFenceValue %u",
+                signalValue - 2, currentFenceValue);
   }
   tgfx->getCurrentSwapchainTextureIndex(mainWindowRT, &rtRenderer_private::m_activeSwpchnIndx);
 }

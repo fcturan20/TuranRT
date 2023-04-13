@@ -33,7 +33,6 @@ void camMoveEvent(rtInputAllocationHnd allocHnd, key_action_tgfx state, void* us
 }
 tgfx_vec2 lastMousePosXY = {};
 void camRightClickEvent(rtInputAllocationHnd allocHnd, key_action_tgfx state, void* userPtr) {
-  printf("State: %d\n", state);
   // Allocate WASD keys to move camera position
   if (state != keyAction_tgfx_RELEASE) {
     for (uint32_t i = 0; i < 4; i++) {

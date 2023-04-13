@@ -36,10 +36,11 @@
 #include "bitset_tapi.h"
 #include "tgfx_core.h"
 
-allocator_sys_tapi*            allocatorSys = {};
-tgfx_core*                     tgfx         = {};
-FILESYS_TAPI_PLUGIN_LOAD_TYPE  fileSys      = {};
-PROFILER_TAPI_PLUGIN_LOAD_TYPE profilerSys  = {};
+allocator_sys_tapi*           allocatorSys = {};
+tgfx_core*                    tgfx         = {};
+FILESYS_TAPI_PLUGIN_LOAD_TYPE fileSys      = {};
+tapi_profiler                 profilerSys  = {};
+tapi_stringSys*        stringSys = nullptr;
 
 uint32_t findFirst(std::vector<bool>& stdBitset, bool isTrue) {
   for (uint32_t i = 0; i < stdBitset.size(); i++) {
@@ -51,31 +52,35 @@ uint32_t findFirst(std::vector<bool>& stdBitset, bool isTrue) {
 }
 
 void load_plugins() {
-  pluginHnd_ecstapi threadingPlugin = editorECS->loadPlugin("tapi_threadedjobsys.dll");
+  pluginHnd_ecstapi threadingPlugin = editorECS->loadPlugin(THREADINGSYS_TAPI_PLUGIN_NAME ".dll");
   auto              threadingSys =
     ( THREADINGSYS_TAPI_PLUGIN_LOAD_TYPE )editorECS->getSystem(THREADINGSYS_TAPI_PLUGIN_NAME);
 
-  pluginHnd_ecstapi arrayOfStringsPlugin = editorECS->loadPlugin("tapi_array_of_strings_sys.dll");
-  auto              AoSsys =
-    ( ARRAY_OF_STRINGS_TAPI_LOAD_TYPE )editorECS->getSystem(ARRAY_OF_STRINGS_TAPI_PLUGIN_NAME);
+  pluginHnd_ecstapi stringPlugin = editorECS->loadPlugin(STRINGSYS_TAPI_PLUGIN_NAME ".dll");
+  auto stringSysLoaded = ( STRINGSYS_TAPI_LOAD_TYPE )editorECS->getSystem(STRINGSYS_TAPI_PLUGIN_NAME);
+  stringSys = stringSysLoaded->standardString;
 
-  pluginHnd_ecstapi profilerPlugin = editorECS->loadPlugin("tapi_profiler.dll");
-  profilerSys = ( PROFILER_TAPI_PLUGIN_LOAD_TYPE )editorECS->getSystem(PROFILER_TAPI_PLUGIN_NAME);
+  pluginHnd_ecstapi profilerPlugin = editorECS->loadPlugin(PROFILER_TAPI_PLUGIN_NAME ".dll");
+  auto              profilerSysLoaded =
+    ( PROFILER_TAPI_PLUGIN_LOAD_TYPE )editorECS->getSystem(PROFILER_TAPI_PLUGIN_NAME);
+  profilerSys = profilerSysLoaded->funcs;
 
-  pluginHnd_ecstapi filesysPlugin = editorECS->loadPlugin("tapi_filesys.dll");
+  pluginHnd_ecstapi filesysPlugin = editorECS->loadPlugin(FILESYS_TAPI_PLUGIN_NAME ".dll");
   fileSys = ( FILESYS_TAPI_PLUGIN_LOAD_TYPE )editorECS->getSystem(FILESYS_TAPI_PLUGIN_NAME);
 
-  pluginHnd_ecstapi loggerPlugin = editorECS->loadPlugin("tapi_logger.dll");
+  pluginHnd_ecstapi loggerPlugin = editorECS->loadPlugin(LOGGER_TAPI_PLUGIN_NAME ".dll");
   auto loggerSys = ( LOGGER_TAPI_PLUGIN_LOAD_TYPE )editorECS->getSystem(LOGGER_TAPI_PLUGIN_NAME);
+  logSys         = loggerSys->funcs;
+  logSys->init(string_type_tapi_UTF8, "mainLog.txt");
 
-  pluginHnd_ecstapi bitsetPlugin = editorECS->loadPlugin("tapi_bitset.dll");
+  pluginHnd_ecstapi bitsetPlugin = editorECS->loadPlugin(BITSET_TAPI_PLUGIN_NAME ".dll");
   auto bitsetSys = ( BITSET_TAPI_PLUGIN_LOAD_TYPE )editorECS->getSystem(BITSET_TAPI_PLUGIN_NAME);
 
   allocatorSys =
     ( ALLOCATOR_TAPI_PLUGIN_LOAD_TYPE )editorECS->getSystem(ALLOCATOR_TAPI_PLUGIN_NAME);
 
   {
-    pluginHnd_ecstapi tgfxPlugin = editorECS->loadPlugin("tgfx_core.dll");
+    pluginHnd_ecstapi tgfxPlugin = editorECS->loadPlugin(TGFX_PLUGIN_NAME ".dll");
     auto              tgfxSys    = ( TGFX_PLUGIN_LOAD_TYPE )editorECS->getSystem(TGFX_PLUGIN_NAME);
     if (tgfxSys) {
       tgfx = tgfxSys->api;
@@ -86,7 +91,7 @@ void load_plugins() {
   {
     static constexpr uint32_t bitsetByteLength = 10 << 10;
     std::vector<bool>         stdBitset(bitsetByteLength * 8, false);
-    bitset_tapi              tBitset = bitsetSys->funcs->createBitset(bitsetByteLength);
+    bitset_tapi               tBitset = bitsetSys->funcs->createBitset(bitsetByteLength);
 
     time_t t;
     srand(( unsigned )time(&t));
@@ -139,11 +144,12 @@ void load_systems() {
   float     fov = 45.0f, nearPlane = 0.01f, farPlane = 100.0f, mouseSensitivity = 0.1f;
   rtCameraController::setCameraProps(cam, &res, &nearPlane, &farPlane, &mouseSensitivity, &fov);
 
-  int      i        = 0;
-  uint64_t duration = {};
+
+  unsigned int i        = 0;
+  uint64_t     duration = {};
   while (++i && i < 10000) {
     profiledscope_handle_tapi frameScope = {};
-    profilerSys->funcs->start_profiling(&frameScope, "Frame Duration", &duration, 1);
+    profilerSys->start_profiling(&frameScope, "Frame Duration", &duration, 1);
     rtInputSystem::update();
     rtCameraController::update();
     rtRenderer::getSwapchainTexture();
@@ -151,8 +157,9 @@ void load_systems() {
     rtMeshManager::frame();
     rtSceneModifier::renderScene(firstScene);
     rtRenderer::renderFrame();
-    profilerSys->funcs->finish_profiling(&frameScope);
-    printf("Frame index: %u, duration: %u\n\n\n", i, duration);
+    profilerSys->finish_profiling(&frameScope);
+    logSys->log(log_type_tapi_STATUS, false, L"Frame #%u", i);
+    logSys->log(log_type_tapi_STATUS, false, L"Duration %u", duration);
   }
 
   rtRenderer::close();
@@ -161,6 +168,7 @@ void load_systems() {
 #include "ecs_tapi.h"
 
 ecs_tapi*   editorECS = nullptr;
+tapi_logger logSys    = nullptr;
 extern void initialize_pecfManager();
 extern void load_systems();
 
