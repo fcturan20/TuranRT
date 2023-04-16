@@ -315,7 +315,7 @@ void rtMeshManager::initializeManager() {
   shaderSource_tgfxhnd firstVertShader;
   {
     const char* vertShaderText =
-      (const char*)fileSys->funcs->read_textfile(string_type_tapi_UTF8, SOURCE_DIR "Content/firstShader.vert", string_type_tapi_UTF8);
+      (const char*)fileSys->read_textfile(string_type_tapi_UTF8, SOURCE_DIR "Content/firstShader.vert", string_type_tapi_UTF8);
     contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
                                         shaderStage_tgfx_VERTEXSHADER, ( void* )vertShaderText,
                                         strlen(vertShaderText), &firstVertShader);

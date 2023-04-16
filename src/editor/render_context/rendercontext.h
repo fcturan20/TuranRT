@@ -1,9 +1,9 @@
 #pragma once
+#include <tgfx_structs.h>
 static constexpr unsigned int swapchainTextureCount = 2;
 // Include tgfx_forwardDeclarations.h & glm/glm.hpp before including this
 
-typedef struct mat4_rt rtMat4;
-struct gpuMemBlock_rt;
+typedef struct mat4_rt                          rtMat4;
 typedef struct gpuMemBlock_rt*                  rtGpuMemBlock;
 typedef struct tgfx_raster_pipeline_description rasterPipelineDescription_tgfx;
 struct rtRenderer {
@@ -26,14 +26,17 @@ struct rtRenderer {
   static void close();
 
   // Block should be allocated with either UPLOAD or READBACK
-  static void*                    getBufferMappedMemPtr(rtGpuMemBlock block);
-  static buffer_tgfxhnd           getBufferTgfxHnd(rtGpuMemBlock block);
-  static shaderSource_tgfxhnd     getDefaultFragShader();
-  static void                     getRTFormats(rasterPipelineDescription_tgfx* rasterPipeDesc);
-  static unsigned int             getFrameIndx();
-  static bindingTable_tgfxhnd     getActiveCamBindingTable();
+  static void*                getBufferMappedMemPtr(rtGpuMemBlock block);
+  static buffer_tgfxhnd       getBufferTgfxHnd(rtGpuMemBlock block);
+  static shaderSource_tgfxhnd getDefaultFragShader();
+  static void                 getRTFormats(rasterPipelineDescription_tgfx* rasterPipeDesc);
+  static unsigned int         getFrameIndx();
+  static bindingTable_tgfxhnd getActiveCamBindingTable();
   static const bindingTableDescription_tgfx* getCamBindingDesc();
+  static tgfx_uvec2                          getResolution();
+  static tgfx_gpu_description                getGpuDesc();
 };
+extern gpuQueue_tgfxhnd allQueues[TGFX_WINDOWGPUSUPPORT_MAXQUEUECOUNT];
 
 struct gpuStorageBuffer_rt;
 typedef struct gpuStorageBuffer_rt* rtGpuStorageBuffer;
