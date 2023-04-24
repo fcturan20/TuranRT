@@ -49,10 +49,5 @@ else()
     message("dear Imgui (by Ocornut) isn't installed on your system!")
 endif()
 
-#To compile glsl shaders to SPIR-V in run-time
-find_package(glslang CONFIG REQUIRED)
-target_link_libraries(RTEditor PRIVATE glslang::OSDependent glslang::glslang glslang::MachineIndependent glslang::GenericCodeGen glslang::glslang-default-resource-limits glslang::OGLCompiler glslang::SPVRemapper glslang::SPIRV glslang::HLSL)
-
-
 target_include_directories(RTEditor PUBLIC ${CMAKE_SOURCE_DIR}/dependencies)
-target_link_libraries(RTEditor PRIVATE tgfx_core TGFXVulkan TGFXVulkanGlslang tapi_ecs tapi_string tapi_bitset tapi_filesys tapi_logger tapi_profiler tapi_threadedjobsys tapi_unittest)
+target_link_libraries(RTEditor PRIVATE tgfx_core TGFXVulkan tapi_ecs tapi_string tapi_bitset tapi_filesys tapi_logger tapi_profiler tapi_threadedjobsys tapi_unittest)

@@ -11,14 +11,17 @@ struct rtRenderer {
   static rtGpuMemBlock allocateMemoryBlock(bufferUsageMask_tgfxflag flag, uint64_t size,
                                            regionType memType = UNDEF);
   static void          deallocateMemoryBlock(rtGpuMemBlock memBlock);
-  static void          setActiveFrameCamProps(const rtMat4* view, const rtMat4* proj);
+  static void          setActiveFrameCamProps(const rtMat4* view, const rtMat4* proj,
+                                              const tgfx_vec3* camPos, const tgfx_vec3* camDir, float fovDegrees);
 
   // Renderer execute uploadBundle at the beginning of the frame.
   // No caching, so user should call it every frame.
   // User should manage command bundle lifetime (record, destroy)
   static void upload(commandBundle_tgfxhnd uploadBundle);
   // Similar to upload but executed after all upload calls finished
-  static void render(commandBundle_tgfxhnd renderBundle);
+  static void rasterize(commandBundle_tgfxhnd renderBundle);
+  // Similar to rasterize but executed after all rasterize calls finished
+  static void compute(commandBundle_tgfxhnd commandBundle);
 
   static void initialize(tgfx_windowKeyCallback keyCB);
   static void getSwapchainTexture();
@@ -32,7 +35,9 @@ struct rtRenderer {
   static void                 getRTFormats(rasterPipelineDescription_tgfx* rasterPipeDesc);
   static unsigned int         getFrameIndx();
   static bindingTable_tgfxhnd getActiveCamBindingTable();
+  static bindingTable_tgfxhnd getSwapchainStorageBindingTable();
   static const bindingTableDescription_tgfx* getCamBindingDesc();
+  static const bindingTableDescription_tgfx* getSwapchainStorageBindingDesc();
   static tgfx_uvec2                          getResolution();
   static tgfx_gpu_description                getGpuDesc();
 };

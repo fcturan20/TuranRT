@@ -28,7 +28,6 @@ struct gpuMemRegion_rt {
   uint32_t                   memoryTypeIndx   = 0;
 
   rtGpuMemBlock        allocateMemBlock(heapRequirementsInfo_tgfx reqs);
-  void        deallocateMemBlock();
 };
 
 static rtGpuMemBlock findRegionAndAllocateMemBlock(rtGpuMemRegion*           memRegion,
@@ -103,6 +102,7 @@ rtGpuMemRegion getGpuMemRegion(rtRenderer::regionType memType) {
     case rtRenderer::UPLOAD: return m_stagingAllocations;
     case rtRenderer::LOCAL: return m_devLocalAllocations;
   }
+  return nullptr;
 }
 rtGpuMemBlock allocateMemBlock(std::vector<rtGpuMemBlock>& memAllocs,
                                                 uint64_t regionSize, uint64_t size,
@@ -186,7 +186,7 @@ void initMemRegions() {
       }
       hostVisibleMemType = memTypeIndx;
     }
-    if (memDesc.allocationType == memoryallocationtype_DEVICELOCAL) {
+    else if (memDesc.allocationType == memoryallocationtype_DEVICELOCAL) {
       // If there 2 different memory types with same allocation type, select the bigger one!
       if (deviceLocalMemType != UINT32_MAX &&
           gpuDesc.memRegions[deviceLocalMemType].maxAllocationSize > memDesc.maxAllocationSize) {

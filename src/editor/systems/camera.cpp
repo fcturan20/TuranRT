@@ -1,6 +1,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
 #include "tgfx_core.h"
+#include <logger_tapi.h>
 
 #include "camera.h"
 #include "../render_context/rendercontext.h"
@@ -155,7 +156,9 @@ void      cameraController_rt::update() {
 
   rtMat4 viewMat, projMat;
   getCameraMatrixes(true, &viewMat, &projMat);
-  rtRenderer::setActiveFrameCamProps(&viewMat, &projMat);
+  tgfx_vec3 camPosTgfx = {pos.x, pos.y, pos.z};
+  tgfx_vec3 camDirTgfx = {front.x, front.y, front.z};
+  rtRenderer::setActiveFrameCamProps(&viewMat, &projMat, &camPosTgfx, &camDirTgfx, float(activeCam_rt->fov));
 }
 
 rtMat4 getRTMAT4(glm::mat4 src) {

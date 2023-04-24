@@ -28,7 +28,9 @@ typedef struct meshManager_rt {
     rtMesh     mesh;
     glm::mat4* transform;
   };
-  static commandBundle_tgfxhnd render(unsigned int count, renderInfo* const infos);
+  // Compute is to render meshes with ray tracing
+  static void render(unsigned int count, renderInfo* const infos, commandBundle_tgfxhnd* raster,
+                     commandBundle_tgfxhnd* compute = nullptr);
   static void                  frame();
 
   static void                  initializeManager();

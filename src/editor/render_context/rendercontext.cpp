@@ -35,9 +35,7 @@ tgfx_window_gpu_support    swapchainSupport                      = {};
 textureChannels_tgfx       depthRTFormat                         = texture_channels_tgfx_D24S8;
 texture_tgfxhnd            swpchnTextures[swapchainTextureCount] = {};
 // Create device local resources
-pipeline_tgfxhnd                          firstComputePipeline = {};
-bindingTable_tgfxhnd                      bufferBindingTable   = {};
-uint32_t                                  camUboOffset         = {};
+uint32_t                                  camUboOffset = {};
 uint64_t                                  waitValue = 0, signalValue = 1;
 fence_tgfxhnd                             fence               = {};
 gpuQueue_tgfxhnd                          queue               = {};
@@ -46,10 +44,11 @@ tgfx_uvec2                                windowResolution = {1280, 720};
 static uint32_t                           GPU_INDEX        = 0;
 static rtGpuMemBlock                      m_gpuCustomDepthRT, m_gpuCamBuffer;
 static uint32_t                           m_activeSwpchnIndx;
-static std::vector<commandBundle_tgfxhnd> m_uploadBundles, m_renderBundles;
-static bindingTableDescription_tgfx       m_camBindingDesc;
-static bindingTable_tgfxhnd               m_camBindingTables[swapchainTextureCount];
-static shaderSource_tgfxhnd               fragShader = {};
+static std::vector<commandBundle_tgfxhnd> m_uploadBundles, m_rasterBndls, m_computeBndls;
+static bindingTableDescription_tgfx       m_camBindingDesc = {}, m_swpchnStorageBindingDesc = {};
+static bindingTable_tgfxhnd               m_camBindingTables[swapchainTextureCount],
+  m_swpchnStorageBinding[swapchainTextureCount];
+static shaderSource_tgfxhnd fragShader = {};
 
 void createGPU() {
   tgfx->load_backend(nullptr, backends_tgfx_VULKAN, nullptr);
@@ -66,8 +65,21 @@ void createGPU() {
               ( uint32_t )gpuDesc.queueFamilyCount, ( uint32_t )gpuDesc.memRegionsCount);
   tgfx->initGPU(gpu);
 }
+
+void compileShadersandPipelines() {
+  // Compile default fragment shader
+  {
+    const char* fragShaderText = ( const char* )fileSys->read_textfile(
+      string_type_tapi_UTF8, SOURCE_DIR "Content/firstShader.frag", string_type_tapi_UTF8);
+    contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
+                                        shaderStage_tgfx_FRAGMENTSHADER, ( void* )fragShaderText,
+                                        strlen(fragShaderText), &fragShader);
+  }
+}
+
 void windowResizeCallback(window_tgfxhnd windowHnd, void* userPtr, tgfx_uvec2 resolution,
                           texture_tgfxhnd* swapchainTextures);
+void recreateSwapchain();
 void createFirstWindow(tgfx_windowKeyCallback keyCB) {
   // Create window and the swapchain
   monitor_tgfxhnd mainMonitor;
@@ -93,96 +105,81 @@ void createFirstWindow(tgfx_windowKeyCallback keyCB) {
     tgfx->createWindow(&windowDesc, nullptr, &mainWindowRT);
   }
 
-  // Create swapchain (GPU operation) on the window
+  recreateSwapchain();
+#ifdef NDEBUG
+  logSys->log(log_type_tapi_STATUS, false, L"createGPUandFirstWindow() finished");
+#endif
+}
+
+struct camUbo {
+  glm::mat4 worldToView;
+  glm::mat4 viewToProj;
+  glm::mat4 viewToWorld;
+  glm::vec4 pos_fov;
+  glm::vec4 dir;
+};
+void createBuffersAndTextures() {
+  // Create camera upload buffer and bind it to camera binding table
   {
-    tgfx->helpers->getWindow_GPUSupport(mainWindowRT, gpu, &swapchainSupport);
+    m_gpuCamBuffer =
+      allocateBuffer(sizeof(camUbo) * swapchainTextureCount,
+                     bufferUsageMask_tgfx_COPYTO | bufferUsageMask_tgfx_STORAGEBUFFER,
+                     getGpuMemRegion(rtRenderer::UPLOAD));
+  }
 
-    swpchnDesc.channels       = swapchainSupport.channels[0];
-    swpchnDesc.colorSpace     = colorspace_tgfx_sRGB_NONLINEAR;
-    swpchnDesc.composition    = windowcomposition_tgfx_OPAQUE;
-    swpchnDesc.imageCount     = swapchainTextureCount;
-    swpchnDesc.swapchainUsage = textureAllUsages;
+#ifdef NDEBUG
+  logSys->log(log_type_tapi_STATUS, false, L"createDeviceLocalResources() finished");
+#endif
+}
 
-    swpchnDesc.presentationMode = windowpresentation_tgfx_IMMEDIATE;
-    swpchnDesc.window           = mainWindowRT;
-    // Get all supported queues of the first GPU
-    for (uint32_t i = 0; i < TGFX_WINDOWGPUSUPPORT_MAXQUEUECOUNT; i++) {
-      if (!swapchainSupport.queues[i]) {
-        break;
-      }
-      allQueues[i] = swapchainSupport.queues[i];
-      swpchnDesc.permittedQueueCount++;
+void createBindingTables() {
+  // Camera binding table
+  {
+    m_camBindingDesc.DescriptorType     = shaderdescriptortype_tgfx_BUFFER;
+    m_camBindingDesc.ElementCount       = 1;
+    m_camBindingDesc.staticSamplers     = nullptr;
+    m_camBindingDesc.staticSamplerCount = 0;
+    m_camBindingDesc.visibleStagesMask  = shaderStage_tgfx_COMPUTESHADER |
+                                         shaderStage_tgfx_VERTEXSHADER |
+                                         shaderStage_tgfx_FRAGMENTSHADER;
+    m_camBindingDesc.isDynamic = false;
+
+    for (uint32_t i = 0; i < swapchainTextureCount; i++) {
+      contentManager->createBindingTable(gpu, &m_camBindingDesc, &m_camBindingTables[i]);
+      uint32_t bindingIndx = 0, bufferOffset = sizeof(camUbo) * i, bufferSize = sizeof(camUbo);
+      contentManager->setBindingTable_Buffer(m_camBindingTables[i], 1, &bindingIndx,
+                                             ( buffer_tgfxhnd* )&m_gpuCamBuffer->resource,
+                                             &bufferOffset, &bufferSize, 0, {});
     }
-    swpchnDesc.permittedQueues = allQueues;
-    // Create swapchain
-    tgfx->createSwapchain(gpu, &swpchnDesc, swpchnTextures);
+  }
+  // Swapchain texture's storage image binding table
+  {
+    m_swpchnStorageBindingDesc.DescriptorType     = shaderdescriptortype_tgfx_STORAGEIMAGE;
+    m_swpchnStorageBindingDesc.ElementCount       = 1;
+    m_swpchnStorageBindingDesc.staticSamplers     = nullptr;
+    m_swpchnStorageBindingDesc.staticSamplerCount = 0;
+    m_swpchnStorageBindingDesc.visibleStagesMask  = shaderStage_tgfx_COMPUTESHADER;
+    m_swpchnStorageBindingDesc.isDynamic          = false;
+
+    for (uint32_t i = 0; i < swapchainTextureCount; i++) {
+      contentManager->createBindingTable(gpu, &m_swpchnStorageBindingDesc,
+                                         &m_swpchnStorageBinding[i]);
+    }
   }
 #ifdef NDEBUG
-  printf("createGPUandFirstWindow() finished!\n");
+  logSys->log(log_type_tapi_STATUS, false, L"createBindingTables() finished");
 #endif
-}
-
-void createDeviceLocalResources() {
-  initMemRegions();
-
-  textureDescription_tgfx textureDesc = {};
-  textureDesc.channelType             = depthRTFormat;
-  textureDesc.dataOrder               = textureOrder_tgfx_SWIZZLE;
-  textureDesc.dimension               = texture_dimensions_tgfx_2D;
-  textureDesc.resolution              = windowResolution;
-  textureDesc.mipCount                = 1;
-  textureDesc.permittedQueues         = allQueues;
-  textureDesc.usage = textureUsageMask_tgfx_RENDERATTACHMENT | textureUsageMask_tgfx_COPYFROM |
-                      textureUsageMask_tgfx_COPYTO;
-  m_gpuCustomDepthRT = allocateTexture(textureDesc);
-
-#ifdef NDEBUG
-  printf("createDeviceLocalResources() finished!\n");
-#endif
-}
-
-void compileShadersandPipelines() {
-  // Compile compute shader, create binding table type & compute pipeline
-  {
-    const char* shaderText = ( const char* )fileSys->read_textfile(
-      string_type_tapi_UTF8,
-      SOURCE_DIR "dependencies/TuranLibraries/shaders/firstComputeShader.comp",
-      string_type_tapi_UTF8);
-    shaderSource_tgfxhnd firstComputeShader = nullptr;
-    contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
-                                        shaderStage_tgfx_COMPUTESHADER, ( void* )shaderText,
-                                        strlen(shaderText), &firstComputeShader);
-
-    // Create binding table desc
-    tgfx_binding_table_description desc = {};
-    desc.DescriptorType                 = shaderdescriptortype_tgfx_BUFFER;
-    desc.ElementCount                   = 1;
-    desc.staticSamplers                 = nullptr;
-    desc.staticSamplerCount             = 0;
-    desc.visibleStagesMask = shaderStage_tgfx_COMPUTESHADER | shaderStage_tgfx_VERTEXSHADER |
-                             shaderStage_tgfx_FRAGMENTSHADER;
-
-    contentManager->createComputePipeline(firstComputeShader, 1, &desc, false,
-                                          &firstComputePipeline);
-  }
-
-  // Compile default fragment shader
-  {
-    const char* fragShaderText = ( const char* )fileSys->read_textfile(
-      string_type_tapi_UTF8, SOURCE_DIR "Content/firstShader.frag", string_type_tapi_UTF8);
-    contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
-                                        shaderStage_tgfx_FRAGMENTSHADER, ( void* )fragShaderText,
-                                        strlen(fragShaderText), &fragShader);
-  }
 }
 
 void rtRenderer::initialize(tgfx_windowKeyCallback keyCB) {
   renderer       = tgfx->renderer;
   contentManager = tgfx->contentmanager;
   createGPU();
-  createFirstWindow(keyCB);
-  createDeviceLocalResources();
+  initMemRegions();
   compileShadersandPipelines();
+  createBuffersAndTextures();
+  createBindingTables();
+  createFirstWindow(keyCB);
 
   renderer->createFences(gpu, 1, 0u, &fence);
   gpuQueue_tgfxhnd queuesPerFam[64];
@@ -210,46 +207,53 @@ void rtRenderer::initialize(tgfx_windowKeyCallback keyCB) {
     depthAttachmentInfo.storeOp        = rasterpassStore_tgfx_STORE;
     depthAttachmentInfo.storeStencilOp = rasterpassStore_tgfx_STORE;
     depthAttachmentInfo.texture        = ( texture_tgfxhnd )m_gpuCustomDepthRT->resource;
-  }
-
-  // Binding table creation
-  {
-    m_camBindingDesc.DescriptorType     = shaderdescriptortype_tgfx_BUFFER;
-    m_camBindingDesc.ElementCount       = 1;
-    m_camBindingDesc.staticSamplerCount = 0;
-    m_camBindingDesc.visibleStagesMask  = shaderStage_tgfx_VERTEXSHADER;
-    m_camBindingDesc.isDynamic          = true;
-
-    for (uint32_t i = 0; i < swapchainTextureCount; i++) {
-      contentManager->createBindingTable(gpu, &m_camBindingDesc, &m_camBindingTables[i]);
-    }
-  }
-
-  // Create camera shader buffer and bind it to camera binding table
-  {
-    m_gpuCamBuffer = allocateBuffer(
-      sizeof(glm::mat4) * 2 * swapchainTextureCount,
-      bufferUsageMask_tgfx_COPYTO | bufferUsageMask_tgfx_STORAGEBUFFER, getGpuMemRegion(UPLOAD));
-    for (uint32_t i = 0; i < swapchainTextureCount; i++) {
-      uint32_t bindingIndx = 0, bufferOffset = sizeof(glm::mat4) * 2 * i,
-               bufferSize = sizeof(glm::mat4) * 2;
-      contentManager->setBindingTable_Buffer(m_camBindingTables[i], 1, &bindingIndx,
-                                             ( buffer_tgfxhnd* )&m_gpuCamBuffer->resource,
-                                             &bufferOffset, &bufferSize, 0, {});
-    }
-  }
-
-  {
-    uint32_t swpchnIndx = UINT32_MAX;
-    tgfx->getCurrentSwapchainTextureIndex(mainWindowRT, &swpchnIndx);
-    renderer->queuePresent(queue, 1, &mainWindowRT);
-    renderer->queueSubmit(queue);
+    *(( float* )depthAttachmentInfo.clearValue.data) = 1.0f;
   }
 
   STOP_PROFILE_TAPI(profilerSys);
   waitValue++;
   signalValue++;
 }
+
+void rtRenderer::renderFrame() {
+  // Record & queue upload command buffers
+  {
+    commandBuffer_tgfxhnd uploadCmdBuffer = renderer->beginCommandBuffer(queue, 0, {});
+    renderer->executeBundles(uploadCmdBuffer, m_uploadBundles.size(), m_uploadBundles.data(), 0,
+                             {});
+    renderer->endCommandBuffer(uploadCmdBuffer);
+    renderer->queueExecuteCmdBuffers(queue, 1, &uploadCmdBuffer, 0, nullptr);
+  }
+  // Record frame's raster & compute command buffers, then queue it
+  {
+    // Raster
+    commandBuffer_tgfxhnd rasterCB = renderer->beginCommandBuffer(queue, 0, nullptr);
+    colorAttachmentInfo.texture    = swpchnTextures[m_activeSwpchnIndx];
+    renderer->beginRasterpass(rasterCB, 1, &colorAttachmentInfo, depthAttachmentInfo, 0, nullptr);
+    renderer->executeBundles(rasterCB, m_rasterBndls.size(), m_rasterBndls.data(), 0, nullptr);
+    renderer->endRasterpass(rasterCB, 0, nullptr);
+    renderer->endCommandBuffer(rasterCB);
+    renderer->queueExecuteCmdBuffers(queue, 1, &rasterCB, 0, nullptr);
+
+    // Compute
+    commandBuffer_tgfxhnd computeCB = renderer->beginCommandBuffer(queue, 0, nullptr);
+    renderer->executeBundles(computeCB, m_computeBndls.size(), m_computeBndls.data(), 0, nullptr);
+    renderer->endCommandBuffer(computeCB);
+    renderer->queueExecuteCmdBuffers(queue, 1, &computeCB, 0, nullptr);
+    renderer->queueFenceSignalWait(queue, 1, &fence, &waitValue, 1, &fence, &signalValue);
+    renderer->queueSubmit(queue);
+  }
+
+  waitValue++;
+  signalValue++;
+  renderer->queuePresent(queue, 1, &mainWindowRT);
+  renderer->queueSubmit(queue);
+
+  m_uploadBundles.clear();
+  m_rasterBndls.clear();
+  m_computeBndls.clear();
+}
+
 void rtRenderer::getSwapchainTexture() {
   uint64_t currentFenceValue = 0;
   while (currentFenceValue < signalValue - 2) {
@@ -259,59 +263,68 @@ void rtRenderer::getSwapchainTexture() {
   }
   tgfx->getCurrentSwapchainTextureIndex(mainWindowRT, &m_activeSwpchnIndx);
 }
-void rtRenderer::renderFrame() {
-  {
-    commandBuffer_tgfxhnd uploadCmdBuffer = renderer->beginCommandBuffer(queue, 0, {});
-    renderer->executeBundles(uploadCmdBuffer, m_uploadBundles.size(), m_uploadBundles.data(), 0,
-                             {});
-    renderer->endCommandBuffer(uploadCmdBuffer);
-    renderer->queueExecuteCmdBuffers(queue, 1, &uploadCmdBuffer, 0, nullptr);
-  }
-  // Record & submit frame's scene render command buffer
-  {
-    commandBuffer_tgfxhnd frameCmdBuffer = renderer->beginCommandBuffer(queue, 0, nullptr);
-    colorAttachmentInfo.texture          = swpchnTextures[m_activeSwpchnIndx];
-    renderer->beginRasterpass(frameCmdBuffer, 1, &colorAttachmentInfo, depthAttachmentInfo, 0,
-                              nullptr);
-    renderer->executeBundles(frameCmdBuffer, m_renderBundles.size(), m_renderBundles.data(), 0,
-                             nullptr);
-    renderer->endRasterpass(frameCmdBuffer, 0, nullptr);
-    renderer->endCommandBuffer(frameCmdBuffer);
 
-    renderer->queueExecuteCmdBuffers(queue, 1, &frameCmdBuffer, 0, nullptr);
-    renderer->queueFenceSignalWait(queue, 1, &fence, &waitValue, 1, &fence, &signalValue);
-    renderer->queueSubmit(queue);
-  }
-  waitValue++;
-  signalValue++;
-  renderer->queuePresent(queue, 1, &mainWindowRT);
-  renderer->queueSubmit(queue);
-
-  m_uploadBundles.clear();
-  m_renderBundles.clear();
-}
-void windowResizeCallback(window_tgfxhnd windowHnd, void* userPtr, tgfx_uvec2 resolution,
-                          texture_tgfxhnd* swapchainTextures) {
-  tgfx->createSwapchain(gpu, &swpchnDesc, swpchnTextures);
+uint32_t resizeCount = 0;
+void     windowResizeCallback(window_tgfxhnd windowHnd, void* userPtr, tgfx_uvec2 resolution,
+                              texture_tgfxhnd* swapchainTextures) {
   windowResolution = resolution;
-  logSys->log(log_type_tapi_STATUS, false, L"Resized %u, %u", resolution.x, resolution.y);
-  rtRenderer::deallocateMemoryBlock(m_gpuCustomDepthRT);
+  recreateSwapchain();
+  logSys->log(log_type_tapi_STATUS, false, L"Resized %u, %u, %u", resolution.x, resolution.y,
+                  resizeCount++);
+}
 
-  textureDescription_tgfx textureDesc = {};
-  textureDesc.channelType             = depthRTFormat;
-  textureDesc.dataOrder               = textureOrder_tgfx_SWIZZLE;
-  textureDesc.dimension               = texture_dimensions_tgfx_2D;
-  textureDesc.resolution              = windowResolution;
-  textureDesc.mipCount                = 1;
-  textureDesc.permittedQueues         = allQueues;
-  textureDesc.usage = textureUsageMask_tgfx_RENDERATTACHMENT | textureUsageMask_tgfx_COPYFROM |
-                      textureUsageMask_tgfx_COPYTO;
-  m_gpuCustomDepthRT          = allocateTexture(textureDesc);
-  depthAttachmentInfo.texture = ( texture_tgfxhnd )m_gpuCustomDepthRT->resource;
-  uint32_t swpchnIndx         = UINT32_MAX;
-  tgfx->getCurrentSwapchainTextureIndex(mainWindowRT, &swpchnIndx);
-  renderer->queuePresent(queue, 1, &mainWindowRT);
-  renderer->queueSubmit(queue);
+void recreateSwapchain() {
+  // Create swapchain (GPU operation) on the window
+  {
+    tgfx->helpers->getWindow_GPUSupport(mainWindowRT, gpu, &swapchainSupport);
+    swpchnDesc = {};
+
+    swpchnDesc.channels       = swapchainSupport.channels[0];
+    swpchnDesc.colorSpace     = colorspace_tgfx_sRGB_NONLINEAR;
+    swpchnDesc.composition    = windowcomposition_tgfx_OPAQUE;
+    swpchnDesc.imageCount     = swapchainTextureCount;
+    swpchnDesc.swapchainUsage = textureAllUsages;
+
+    swpchnDesc.presentationMode = windowpresentation_tgfx_IMMEDIATE;
+    swpchnDesc.window           = mainWindowRT;
+    // Get all supported queues of the first GPU
+    for (uint32_t i = 0; i < TGFX_WINDOWGPUSUPPORT_MAXQUEUECOUNT; i++) {
+      if (!swapchainSupport.queues[i]) {
+        break;
+      }
+      allQueues[i] = swapchainSupport.queues[i];
+      swpchnDesc.permittedQueueCount++;
+    }
+    swpchnDesc.permittedQueues = allQueues;
+    // Create swapchain
+    tgfx->createSwapchain(gpu, &swpchnDesc, swpchnTextures);
+  }
+
+  // Create depth RT
+  {
+    if (m_gpuCustomDepthRT) {
+      rtRenderer::deallocateMemoryBlock(m_gpuCustomDepthRT);
+    }
+
+    textureDescription_tgfx textureDesc = {};
+    textureDesc.channelType             = depthRTFormat;
+    textureDesc.dataOrder               = textureOrder_tgfx_SWIZZLE;
+    textureDesc.dimension               = texture_dimensions_tgfx_2D;
+    textureDesc.resolution              = windowResolution;
+    textureDesc.mipCount                = 1;
+    textureDesc.permittedQueues         = allQueues;
+    textureDesc.usage = textureUsageMask_tgfx_RENDERATTACHMENT | textureUsageMask_tgfx_COPYFROM |
+                        textureUsageMask_tgfx_COPYTO;
+
+    m_gpuCustomDepthRT          = allocateTexture(textureDesc, getGpuMemRegion(rtRenderer::LOCAL));
+    depthAttachmentInfo.texture = ( texture_tgfxhnd )m_gpuCustomDepthRT->resource;
+  }
+
+  for (uint32_t i = 0; i < swapchainTextureCount; i++) {
+    uint32_t bindingIndx = 0;
+    contentManager->setBindingTable_Texture(m_swpchnStorageBinding[i], 1, &bindingIndx,
+                                            &swpchnTextures[i]);
+  }
 }
 
 shaderSource_tgfxhnd rtRenderer::getDefaultFragShader() { return fragShader; }
@@ -324,8 +337,11 @@ unsigned int rtRenderer::getFrameIndx() { return m_activeSwpchnIndx; }
 void         rtRenderer::upload(commandBundle_tgfxhnd uploadBundle) {
   m_uploadBundles.push_back(uploadBundle);
 }
-void rtRenderer::render(commandBundle_tgfxhnd renderBundle) {
-  m_renderBundles.push_back(renderBundle);
+void rtRenderer::rasterize(commandBundle_tgfxhnd renderBundle) {
+  m_rasterBndls.push_back(renderBundle);
+}
+void rtRenderer::compute(commandBundle_tgfxhnd commandBundle) {
+  m_computeBndls.push_back(commandBundle);
 }
 
 void rtRenderer::close() {
@@ -334,7 +350,6 @@ void rtRenderer::close() {
   while (fenceVal != waitValue) {
     renderer->getFenceValue(fence, &fenceVal);
   }
-  contentManager->destroyPipeline(firstComputePipeline);
   renderer->destroyFence(fence);
 }
 
@@ -345,23 +360,30 @@ struct gpuMeshBuffer_rt {
   void*         copyData             = {};
   uint64_t      copyVertexBufferSize = 0, copyIndexBufferSize = 0;
 };
-struct camUbo {
-  glm::mat4 view;
-  glm::mat4 proj;
-};
 camUbo*          cams = {};
 extern glm::mat4 getGLMMAT4(rtMat4 src);
-void             rtRenderer::setActiveFrameCamProps(const rtMat4* view, const rtMat4* proj) {
+void             rtRenderer::setActiveFrameCamProps(const rtMat4* view, const rtMat4* proj,
+                                                    const tgfx_vec3* camPos, const tgfx_vec3* camDir,
+                                                    float fov) {
   if (!cams) {
     cams = ( camUbo* )getBufferMappedMemPtr(m_gpuCamBuffer);
   }
-  cams[m_activeSwpchnIndx].view = getGLMMAT4(*view);
-  cams[m_activeSwpchnIndx].proj = getGLMMAT4(*proj);
+  cams[m_activeSwpchnIndx].worldToView = getGLMMAT4(*view);
+  cams[m_activeSwpchnIndx].viewToProj  = getGLMMAT4(*proj);
+  cams[m_activeSwpchnIndx].viewToWorld = glm::inverse(cams[m_activeSwpchnIndx].worldToView);
+  cams[m_activeSwpchnIndx].pos_fov = glm::vec4(camPos->x, camPos->y, camPos->z, fov);
+  cams[m_activeSwpchnIndx].dir     = glm::vec4(camDir->x, camDir->y, camDir->z, 0.0f);
 }
 
 bindingTable_tgfxhnd rtRenderer::getActiveCamBindingTable() {
   return m_camBindingTables[getFrameIndx()];
 }
+bindingTable_tgfxhnd rtRenderer::getSwapchainStorageBindingTable() {
+  return m_swpchnStorageBinding[getFrameIndx()];
+}
 const bindingTableDescription_tgfx* rtRenderer::getCamBindingDesc() { return &m_camBindingDesc; }
-tgfx_uvec2                          rtRenderer::getResolution() { return windowResolution; }
-tgfx_gpu_description                rtRenderer::getGpuDesc() { return gpuDesc; }
+const bindingTableDescription_tgfx* rtRenderer::getSwapchainStorageBindingDesc() {
+  return &m_swpchnStorageBindingDesc;
+}
+tgfx_uvec2           rtRenderer::getResolution() { return windowResolution; }
+tgfx_gpu_description rtRenderer::getGpuDesc() { return gpuDesc; }

@@ -55,7 +55,8 @@ void rtSceneManager::initializeManager() {
 struct scene_rt {
   std::vector<entityHnd_ecstapi>     entities;
   bindingTable_tgfxhnd               table;
-  std::vector<commandBundle_tgfxhnd> bundles;
+  std::vector<commandBundle_tgfxhnd> rasterBndles;
+  std::vector<commandBundle_tgfxhnd> computeBndles;
 };
 
 rtScene rtSceneManager::createScene() { return new scene_rt; }
@@ -95,25 +96,36 @@ entityHnd_ecstapi rtSceneModifier::addDefaultEntity(rtScene scene) {
 }
 
 void rtSceneModifier::renderScene(rtScene scene) {
-  scene->bundles.clear();
-  // Each mesh renderer has its own pipeline, binding table, vertex/index buffer(s) & draw type
-  // (direct/indirect). So each mesh renderer should provide a command bundle.
-  std::vector<meshManager_rt::renderInfo> infos;
-  for (entityHnd_ecstapi ntt : scene->entities) {
-    compType_ecstapi  compType = {};
-    defaultComponent* comp     = ( defaultComponent* )editorECS->get_component_byEntityHnd(
-          ntt, rtSceneManager_private::defaultCompTypeID, &compType);
-    assert(comp && "Default component isn't found!");
-    for (rtMesh mesh : comp->m_meshes) {
-      meshManager_rt::renderInfo info;
-      info.mesh = mesh;
-      info.transform = &comp->m_worldTransform;
-      infos.push_back(info);
-    }
-  }
-  scene->bundles.push_back(meshManager_rt::render(infos.size(), infos.data()));
+  scene->rasterBndles.clear();
+  scene->computeBndles.clear();
 
-  for (commandBundle_tgfxhnd bundle : scene->bundles) {
-    rtRenderer::render(bundle);
+  // Static mesh rendering
+  {
+    // Each mesh renderer has its own pipeline, binding table, vertex/index buffer(s) & draw type
+    // (direct/indirect). So each mesh renderer should provide a command bundle.
+    std::vector<meshManager_rt::renderInfo> infos;
+    for (entityHnd_ecstapi ntt : scene->entities) {
+      compType_ecstapi  compType = {};
+      defaultComponent* comp     = ( defaultComponent* )editorECS->get_component_byEntityHnd(
+        ntt, rtSceneManager_private::defaultCompTypeID, &compType);
+      assert(comp && "Default component isn't found!");
+      for (rtMesh mesh : comp->m_meshes) {
+        meshManager_rt::renderInfo info;
+        info.mesh      = mesh;
+        info.transform = &comp->m_worldTransform;
+        infos.push_back(info);
+      }
+    }
+    commandBundle_tgfxhnd rasterBndl, computeBndl;
+    meshManager_rt::render(infos.size(), infos.data(), &rasterBndl, &computeBndl);
+    scene->rasterBndles.push_back(rasterBndl);
+    scene->computeBndles.push_back(computeBndl);
+  }
+
+  for (commandBundle_tgfxhnd bundle : scene->rasterBndles) {
+    rtRenderer::rasterize(bundle);
+  }
+  for (commandBundle_tgfxhnd computeBundle : scene->computeBndles) {
+    rtRenderer::compute(computeBundle);
   }
 }

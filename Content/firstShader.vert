@@ -1,5 +1,6 @@
 #version 460
-#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_KHR_vulkan_glsl: enable
+#extension GL_EXT_nonuniform_qualifier : enable
 layout(location = 0) in vec3 vertPos;
 layout(location = 1) in vec3 vertNorm;
 layout(location = 2) in vec2 textCoords;
@@ -7,6 +8,8 @@ layout(location = 2) in vec2 textCoords;
 layout(std140, set = 0, binding = 0) readonly buffer camTransform{
     mat4 view;
     mat4 proj;
+    // 0: pos-FOV
+    vec4 pos;
 } cam;
 
 layout(std140, set = 1, binding = 0) readonly buffer worldTransforms{
@@ -25,5 +28,5 @@ void main() {
     vecPos.y = -vecPos.y;
     gl_Position = vecPos;
     //textCoord = textCoords.xy;
-    vertColor = manuelVertColors[gl_VertexIndex % 3];
+    vertColor = (vertNorm + 1.0f) / 2.0f;
 }
