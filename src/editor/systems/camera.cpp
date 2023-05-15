@@ -11,8 +11,8 @@ static rtCamera  activeCam_rt           = nullptr;
 static glm::vec3 worldUp                = glm::vec3(0, 1, 0);
 static bool      isCameraControllerInit = false;
 struct camera_rt {
-  glm::vec3 pos = glm::vec3(0,0,-10), rot = {}, scale = {}, target = glm::vec3(0,0,-1);
-  float     fov = 45.0f, nearPlane = 0.01f, farPlane = 100.0f, mouseSensitivity = 0.001f,
+  glm::vec3 pos = glm::vec3(0,0,-1), rot = {}, scale = {}, target = glm::vec3(0,0,-1);
+  float     fov = 90.0f, nearPlane = 0.01f, farPlane = 100.0f, mouseSensitivity = 0.1f,
         mouseYaw = -90.0f, mousePitch = 0.0f;
   tgfx_vec2 res = {1920.0f, 1080.0f};
 };

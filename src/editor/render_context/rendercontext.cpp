@@ -14,8 +14,12 @@
 #include <tgfx_structs.h>
 
 #include "../editor_includes.h"
-#include "rendercontext.h"
+#include "../resourceSys/shaderEffect.h"
 #include "rendererAllocator.h"
+#include "../resourceSys/resourceManager.h"
+#include "../resourceSys/mesh.h"
+#include "forwardMesh.h"
+#include "rendercontext.h"
 
 tgfx_renderer*            renderer       = nullptr;
 tgfx_gpudatamanager*      contentManager = nullptr;
@@ -48,7 +52,6 @@ static std::vector<commandBundle_tgfxhnd> m_uploadBundles, m_rasterBndls, m_comp
 static bindingTableDescription_tgfx       m_camBindingDesc = {}, m_swpchnStorageBindingDesc = {};
 static bindingTable_tgfxhnd               m_camBindingTables[swapchainTextureCount],
   m_swpchnStorageBinding[swapchainTextureCount];
-static shaderSource_tgfxhnd fragShader = {};
 
 void createGPU() {
   tgfx->load_backend(nullptr, backends_tgfx_VULKAN, nullptr);
@@ -64,17 +67,6 @@ void createGPU() {
               L"GPU Name: %v\n Queue Family Count: %u\n Memory Regions Count: %u\n", gpuDesc.name,
               ( uint32_t )gpuDesc.queueFamilyCount, ( uint32_t )gpuDesc.memRegionsCount);
   tgfx->initGPU(gpu);
-}
-
-void compileShadersandPipelines() {
-  // Compile default fragment shader
-  {
-    const char* fragShaderText = ( const char* )fileSys->read_textfile(
-      string_type_tapi_UTF8, SOURCE_DIR "Content/firstShader.frag", string_type_tapi_UTF8);
-    contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
-                                        shaderStage_tgfx_FRAGMENTSHADER, ( void* )fragShaderText,
-                                        strlen(fragShaderText), &fragShader);
-  }
 }
 
 void windowResizeCallback(window_tgfxhnd windowHnd, void* userPtr, tgfx_uvec2 resolution,
@@ -176,10 +168,10 @@ void rtRenderer::initialize(tgfx_windowKeyCallback keyCB) {
   contentManager = tgfx->contentmanager;
   createGPU();
   initMemRegions();
-  compileShadersandPipelines();
   createBuffersAndTextures();
   createBindingTables();
   createFirstWindow(keyCB);
+  rtForwardMeshManager::initializeManager();
 
   renderer->createFences(gpu, 1, 0u, &fence);
   gpuQueue_tgfxhnd queuesPerFam[64];
@@ -326,8 +318,6 @@ void recreateSwapchain() {
                                             &swpchnTextures[i]);
   }
 }
-
-shaderSource_tgfxhnd rtRenderer::getDefaultFragShader() { return fragShader; }
 
 void rtRenderer::getRTFormats(rasterPipelineDescription_tgfx* rasterPipeDesc) {
   rasterPipeDesc->colorTextureFormats[0]    = swpchnDesc.channels;

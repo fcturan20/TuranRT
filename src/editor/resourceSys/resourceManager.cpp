@@ -1,19 +1,22 @@
 #include <assert.h>
 #include <vector>
-// Assimp libraries to load Model
-#include <assimp/postprocess.h>
-#include <assimp/scene.h>
-#include <assimp/Importer.hpp>
+#include <string>
 #include <glm/glm.hpp>
 
+#include <logger_tapi.h>
+#include <string_tapi.h>
+#include <ecs_tapi.h>
+#include <tgfx_forwarddeclarations.h>
+
+#include "../editor_includes.h"
 #include "resourceManager.h"
 #include "mesh.h"
 #include "scene.h"
 
 struct resource_rt {
-  std::string filePath;
-  bool        isBinary;
-  void*       resourcePtr;
+  std::string           filePath;
+  bool                  isBinary;
+  void*                 resourcePtr;
   rtResourceManagerType resourceManager;
   // Manager infos isn't used for now
 };
@@ -34,7 +37,7 @@ struct resourceManagerType_rt {
   rtResourceManager::isResourceValidFnc     validate;
 };
 
-rtResource rtResourceManager::createResource(rtResourceDesc desc) {
+rtResource resourceManager_rt::createResource(rtResourceDesc desc) {
   assert(desc.pathNameExt && "Resource path name should be valid!");
   /*
   if (!desc.managerType->validate(desc.resourceHnd)) {
@@ -46,16 +49,16 @@ rtResource rtResourceManager::createResource(rtResourceDesc desc) {
   // With this way, rtResourceManager can automatically load resources at the startup and app can
   // get resource handles by describing them.
 
-  rtResource resource   = new resource_rt;
-  resource->filePath    = desc.pathNameExt;
-  resource->isBinary    = desc.isBinary;
-  resource->resourcePtr = desc.resourceHnd;
+  rtResource resource       = new resource_rt;
+  resource->filePath        = desc.pathNameExt;
+  resource->isBinary        = desc.isBinary;
+  resource->resourcePtr     = desc.resourceHnd;
   resource->resourceManager = desc.managerType;
   rtResourceManager_private::resources.push_back(resource);
   return resource;
 }
 
-rtResourceManagerType rtResourceManager::registerManager(managerDesc desc) {
+rtResourceManagerType resourceManager_rt::registerManager(managerDesc desc) {
   resourceManagerType_rt* manager = new resourceManagerType_rt;
   manager->deserialize            = desc.deserialize;
   manager->validate               = desc.validate;
@@ -64,7 +67,7 @@ rtResourceManagerType rtResourceManager::registerManager(managerDesc desc) {
   return manager;
 }
 
-bool rtResourceManager::deserializeResource(rtResourceDesc* desc, rtResource* resourceHnd) {
+bool resourceManager_rt::deserializeResource(rtResourceDesc* desc, rtResource* resourceHnd) {
   for (rtResource resource : rtResourceManager_private::resources) {
     if (desc->isBinary == resource->isBinary &&
         !strcmp(desc->pathNameExt, resource->filePath.data())) {
@@ -82,75 +85,15 @@ bool rtResourceManager::deserializeResource(rtResourceDesc* desc, rtResource* re
   }
   return false;
 }
-
-rtResource* rtResourceManager::importAssimp(const char* PATH, uint64_t* resourceCount) {
-  Assimp::Importer import;
-  const aiScene*   aScene = nullptr;
-  {
-    aScene = import.ReadFile(PATH, 0 | aiProcess_GenNormals | aiProcess_CalcTangentSpace |
-                                     aiProcess_FindDegenerates | aiProcess_FlipUVs |
-                                     aiProcess_Triangulate | aiProcess_GenUVCoords |
-                                     aiProcess_FindInvalidData);
-
-    // Check if scene reading errors!
-    if (!aScene || aScene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !aScene->mRootNode) {
-      printf("FAIL: Assimp couldn't load the file. Log: %s\n", import.GetErrorString());
-      return nullptr;
-    }
+extern rtResource* importFileUsingAssimp(const wchar_t* i_PATH, uint64_t* resourceCount);
+extern rtResource* importFileUsingGLTF(const wchar_t* i_PATH, uint64_t* resourceCount);
+rtResource* resourceManager_rt::importFile(const wchar_t* i_PATH, uint64_t* resourceCount) {
+  if (!importFileUsingGLTF(i_PATH, resourceCount)) {
+    return importFileUsingAssimp(i_PATH, resourceCount);
   }
-
-  std::vector<rtResource> resources;
-  std::vector<rtMesh>     meshes;
-  for (uint32_t i = 0; i < aScene->mNumMeshes; i++) {
-    rtMesh mesh = rtMeshManager::createDefaultMesh(aScene->mMeshes[i]);
-    if (!mesh) {
-      continue;
-    }
-    meshes.push_back(mesh);
-
-    rtResourceDesc resourceDesc = {};
-    resourceDesc.managerType    = rtMeshManager::managerType();
-    resourceDesc.resourceHnd    = mesh;
-    std::string meshName        = SOURCE_DIR "Content/Meshes/";
-
-    bool isThereNameCollision = false;
-    // TODO: Check against name collision across meshes in the same Assimp Scene.
-
-    if (aScene->mMeshes[i]->mName.length && !isThereNameCollision) {
-      meshName += aScene->mMeshes[i]->mName.C_Str();
-    } else {
-      // TODO: Find the first aiNode in the scene that references this mesh
-      //  then use entity's name as mesh name
-    }
-
-    resourceDesc.pathNameExt = meshName.c_str();
-    resources.push_back(rtResourceManager::createResource(resourceDesc));
-  }
-
-  {
-    rtScene scene = rtSceneManager::createScene();
-    rtSceneModifier::createEntitiesWithAssimp(scene, aScene->mRootNode, meshes.data());
-    rtResourceDesc resourceDesc = {};
-    resourceDesc.managerType    = rtSceneManager::managerType();
-    resourceDesc.resourceHnd    = scene;
-    std::string meshName        = SOURCE_DIR "Content/Scenes/";
-
-    if (aScene->mRootNode->mName.length) {
-      meshName += aScene->mRootNode->mName.C_Str();
-    } else {
-      meshName += aScene->GetShortFilename(PATH);
-    }
-    resourceDesc.pathNameExt = meshName.c_str();
-
-    resources.push_back(rtResourceManager::createResource(resourceDesc));
-  }
-
-  rtResource* finalList = new rtResource[resources.size()];
-  memcpy(finalList, resources.data(), resources.size() * sizeof(rtResource));
-  *resourceCount = resources.size();
-  return finalList;
 }
-void* rtResourceManager::getResourceHnd(rtResource resource, rtResourceManagerType& managerType) {
+
+void* resourceManager_rt::getResourceHnd(rtResource resource, rtResourceManagerType& managerType) {
   managerType = resource->resourceManager;
   return resource->resourcePtr;
 }

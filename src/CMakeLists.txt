@@ -13,9 +13,12 @@ target_link_libraries(RTEditor PRIVATE glm::glm)
 find_package(Flatbuffers CONFIG REQUIRED)
     target_link_libraries(RTEditor PRIVATE flatbuffers::flatbuffers)
 
-    
+
 find_package(assimp CONFIG REQUIRED)
 target_link_libraries(RTEditor PRIVATE assimp::assimp)
+
+find_package(fastgltf CONFIG REQUIRED)
+target_link_libraries(RTEditor PRIVATE fastgltf::fastgltf)
 
 
 find_package(glfw3 CONFIG REQUIRED)

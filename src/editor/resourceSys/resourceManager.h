@@ -25,9 +25,9 @@ typedef struct resourceDesc_rt {
   void*                 resourceHnd;
 } rtResourceDesc;
 typedef struct resourceManager_rt {
-  // Import resources from a generic file format with assimp
+  // Import resource from a file
   // @return resourceCount sized resource handle list
-  static rtResource* importAssimp(const char* PATH, uint64_t* resourceCount);
+  static rtResource* importFile(const wchar_t* PATH, uint64_t* resourceCount);
   // Load a resource from file
   // @param desc: Description is read but can be changed if there are problems
   // @param resourceHnd: Handle that you can use in rtResourceManager

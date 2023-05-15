@@ -28,3 +28,10 @@ void printer_editor(result_editor result, const char* log);
 typedef struct mat4_rt {
   float v[16];
 } rtMat4;
+
+#ifndef RT_STATIC_CONSTEXPR_DEFINITIONS
+#define uint32_sc static constexpr uint32_t
+#define uint16_c static constexpr uint16_t
+#define char_c static constexpr const char*
+#define length_c(constexprarray) sizeof(constexprarray) / sizeof(constexprarray[0])
+#endif // RT_STATIC_CONSTEXPR_DEFINITIONS

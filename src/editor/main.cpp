@@ -12,17 +12,6 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
-#include "tgfx_forwarddeclarations.h"
-
-// RTEditor headers
-#include "editor_includes.h"
-#include "resourceSys/resourceManager.h"
-#include "render_context/rendercontext.h"
-#include "resourceSys/mesh.h"
-#include "resourceSys/scene.h"
-#include "systems/input.h"
-#include "systems/camera.h"
-
 // TuranLibraries headers
 #include "unittestsys_tapi.h"
 #include "TuranLibraries/editor/main.h"
@@ -36,6 +25,19 @@
 #include "threadingsys_tapi.h"
 #include "bitset_tapi.h"
 #include "tgfx_core.h"
+
+// TGFX headers
+#include "tgfx_forwarddeclarations.h"
+
+// RTEditor headers
+#include "editor_includes.h"
+#include "resourceSys/resourceManager.h"
+#include "render_context/rendercontext.h"
+#include "resourceSys/mesh.h"
+#include "resourceSys/scene.h"
+#include "systems/input.h"
+#include "systems/camera.h"
+
 
 unittestsys_tapi*   unitTestSys  = {};
 allocator_sys_tapi* allocatorSys = {};
@@ -74,13 +76,13 @@ void load_plugins() {
 void load_systems() {
   load_plugins();
 
-  rtRenderer::initialize(rtInputSystem::getCallback());
   rtMeshManager::initializeManager();
   rtSceneManager::initializeManager();
+  rtRenderer::initialize(rtInputSystem::getCallback());
 
   uint64_t    resourceCount  = {};
-  rtResource* firstResources = rtResourceManager::importAssimp( // SOURCE_DIR "Content/cube.glb"
-    SOURCE_DIR "Content/gun.glb"
+  rtResource* firstResources = rtResourceManager::importFile( // SOURCE_DIR "Content/cube.glb"
+    SOURCE_DIR L"Content/Gun.glb"
     //"D:\\Desktop\\Meshes\\Bakery\\scene.gltf"
     ,
     &resourceCount);
@@ -95,9 +97,8 @@ void load_systems() {
 
   rtCamera cam = rtCameraController::createCamera(true);
   rtCameraController::setActiveCamera(cam);
-  tgfx_vec2 res = {1920.0, 1080.0f};
-  float     fov = 45.0f, nearPlane = 0.01f, farPlane = 100.0f, mouseSensitivity = 0.1f;
-  rtCameraController::setCameraProps(cam, &res, &nearPlane, &farPlane, &mouseSensitivity, &fov);
+  tgfx_vec2 res = {rtRenderer::getResolution().x, rtRenderer::getResolution().y};
+  rtCameraController::setCameraProps(cam, &res);
 
   unsigned int i        = 0;
   uint64_t     duration = {};

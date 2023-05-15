@@ -1,16 +1,18 @@
 #pragma once
-#include "assimp/types.h"
-#include "ecs_tapi.h"
-#include "resourceManager.h"
+// Include ecs_tapi & resourceManager.h before this
 
 typedef struct scene_rt* rtScene;
 
-struct aiNode;
-typedef struct mesh_rt* rtMesh;
+typedef struct defaultComponent_rt {
+  std::vector<rtMesh> m_meshes;
+  glm::mat4           m_worldTransform;
+
+  std::vector<entityHnd_ecstapi> m_children;
+  static compTypeID_ecstapi      getDefaultComponentTypeID();
+} rtDefaultComponent;
+
 typedef struct sceneModifier_rt {
   static entityHnd_ecstapi addDefaultEntity(rtScene scene);
-  // @param: Meshes should be in the same order as aiScene's
-  static void createEntitiesWithAssimp(rtScene scene, aiNode* rootNode, rtMesh* const meshes);
   static void renderScene(rtScene scene);
 } rtSceneModifier;
 
