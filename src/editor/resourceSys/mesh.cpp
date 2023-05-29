@@ -13,33 +13,33 @@
 #include "resourceManager.h"
 #include "../editor_includes.h"
 #include "mesh.h"
-static bool                    deserializeMesh(rtResourceDesc* desc) { return false; }
-static bool                    isMeshValid(void* dataHnd) { return false; }
-std::vector<rtMeshManagerType> Mmts;
-struct meshManagerType_rt {
-  rtMeshManager::managerDesc desc;
+static unsigned char                    deserializeMesh(const rtResourceDesc* desc) { return false; }
+static unsigned char                    isMeshValid(void* dataHnd) { return false; }
+std::vector<rtMeshManagerType*> Mmts;
+struct rtMeshManagerType {
+  MM_managerDesc desc;
 };
-rtResourceManagerType meshManagerRMT = {};
+const struct rtResourceManagerType* meshManagerRMT = {};
 
-rtResourceManagerType meshManager_rt::managerType() { return meshManagerRMT; }
+const struct rtResourceManagerType* MM_managerType() { return meshManagerRMT; }
 
 struct meshRt_base {
-  rtMeshManagerType type;
+  const rtMeshManagerType* type;
 };
-void* meshManager_rt::createMeshHandle(rtMeshManagerType Mmt) {
+void* MM_createMeshHandle(const struct rtMeshManagerType* Mmt) {
   meshRt_base* base = ( meshRt_base* )malloc(sizeof(meshRt_base) + Mmt->desc.meshStructSize);
   base->type        = Mmt;
   return ( void* )(uintptr_t(base) + sizeof(meshRt_base));
 }
-meshRt_base* accessBaseMesh(rtMesh m) {
+meshRt_base* accessBaseMesh(struct rtMesh* m) {
   return reinterpret_cast<meshRt_base*>(reinterpret_cast<uintptr_t>(m) - sizeof(meshRt_base));
 }
 
-rtMesh meshManager_rt::allocateMesh(rtMeshManagerType Mmt, uint32_t vertexCount,
+rtMesh* MM_allocateMesh(const struct rtMeshManagerType* Mmt, uint32_t vertexCount,
                                     uint32_t indexCount, void* extraInfo, void** meshData) {
   return Mmt->desc.allocateMeshFnc(vertexCount, indexCount, extraInfo, meshData);
 }
-unsigned char meshManager_rt::uploadMeshes(unsigned int count, rtMesh* meshes) {
+unsigned char MM_uploadMeshes(unsigned int count, rtMesh** meshes) {
   unsigned char isAnyFailed = 0, isAnySucceeded = 0;
   for (uint32_t i = 0; i < count; i++) {
     meshRt_base* base = accessBaseMesh(meshes[i]);
@@ -51,9 +51,10 @@ unsigned char meshManager_rt::uploadMeshes(unsigned int count, rtMesh* meshes) {
   }
   return (isAnySucceeded) ? (isAnyFailed + isAnySucceeded) : 0;
 }
-commandBundle_tgfxhnd* meshManager_rt::renderMeshes(unsigned int            count,
-                                                    const renderInfo* const infos, unsigned int* cmdBndleCount) {
-  std::vector<std::vector<rtMeshManager::renderInfo>> infoPerType(Mmts.size());
+commandBundle_tgfxhnd* MM_renderMeshes(unsigned int            count,
+                                                    const MM_renderInfo* const infos,
+                                                    unsigned int*           cmdBndleCount) {
+  std::vector<std::vector<MM_renderInfo>> infoPerType(Mmts.size());
   for (uint32_t i = 0; i < count; i++) {
     auto base = accessBaseMesh(infos[i].mesh);
     for (uint32_t MmtIndx = 0; MmtIndx < Mmts.size(); MmtIndx++) {
@@ -65,7 +66,7 @@ commandBundle_tgfxhnd* meshManager_rt::renderMeshes(unsigned int            coun
   }
   uint32_t validBundleCount = 0;
   for (uint32_t mmtIndx = 0; mmtIndx < infoPerType.size(); mmtIndx++) {
-    rtMeshManagerType manager  = Mmts[mmtIndx];
+    rtMeshManagerType* manager  = Mmts[mmtIndx];
     const auto&       infoList = infoPerType[mmtIndx];
     if (!infoList.size()) {
       continue;
@@ -74,7 +75,7 @@ commandBundle_tgfxhnd* meshManager_rt::renderMeshes(unsigned int            coun
   }
   commandBundle_tgfxhnd* bundles = new commandBundle_tgfxhnd[validBundleCount];
   for (uint32_t mmtIndx = 0, bndleIndx = 0; mmtIndx < infoPerType.size(); mmtIndx++) {
-    rtMeshManagerType manager  = Mmts[mmtIndx];
+    rtMeshManagerType* manager  = Mmts[mmtIndx];
     const auto&       infoList = infoPerType[mmtIndx];
     if (!infoList.size()) {
       continue;
@@ -84,7 +85,7 @@ commandBundle_tgfxhnd* meshManager_rt::renderMeshes(unsigned int            coun
   *cmdBndleCount = validBundleCount;
   return bundles;
 }
-unsigned char meshManager_rt::destroyMeshes(unsigned int count, rtMesh* meshes) {
+unsigned char MM_destroyMeshes(unsigned int count, rtMesh** meshes) {
   unsigned char isAnyFailed = 0, isAnySucceeded = 0;
   for (uint32_t i = 0; i < count; i++) {
     meshRt_base* base = accessBaseMesh(meshes[i]);
@@ -96,23 +97,23 @@ unsigned char meshManager_rt::destroyMeshes(unsigned int count, rtMesh* meshes) 
   }
   return (isAnySucceeded) ? (isAnyFailed + isAnySucceeded) : 0;
 }
-void meshManager_rt::frame() {
-  for (rtMeshManagerType Mmt : Mmts) {
+void MM_frame() {
+  for (rtMeshManagerType* Mmt : Mmts) {
     Mmt->desc.frameFnc();
   }
 }
 
-rtMeshManagerType meshManager_rt::registerManager(managerDesc desc) {
-  rtMeshManagerType Mmt = new meshManagerType_rt;
+const rtMeshManagerType* MM_registerManager(MM_managerDesc desc) {
+  rtMeshManagerType* Mmt = new rtMeshManagerType;
   Mmt->desc             = desc;
   Mmts.push_back(Mmt);
   return Mmt;
 }
-void meshManager_rt::initializeManager() {
-  rtResourceManager::managerDesc desc;
-  desc.managerName       = "Mesh Resource Manager";
-  desc.managerVer        = MAKE_PLUGIN_VERSION_TAPI(0, 0, 0);
-  desc.deserialize       = deserializeMesh;
-  desc.validate          = isMeshValid;
-  meshManagerRMT    = rtResourceManager::registerManager(desc);
+void MM_initializeManager() {
+  RM_managerDesc desc;
+  desc.managerName = "Mesh Resource Manager";
+  desc.managerVer  = MAKE_PLUGIN_VERSION_TAPI(0, 0, 0);
+  desc.deserialize = deserializeMesh;
+  desc.validate    = isMeshValid;
+  meshManagerRMT   = RM_registerManager(desc);
 }

@@ -1,4 +1,7 @@
 #pragma once
+#ifdef __cplusplus
+extern "C" {
+#endif
 // Include mesh.h & tgfx_structs.h before this
 
 /*
@@ -14,20 +17,22 @@
  get_textCoord1() is Mmt's job.
  */
 
-typedef struct visibilityMeshManager_rt {
-  // To avoid unnecessary RAM->RAM copies, get either staging or wait queue memory
-  static rtMesh allocateMesh(unsigned int vertexCount, unsigned int indexCount, void** meshData);
-  // Uploads memory block of allocateMesh's meshData to GPU and validates rtMesh
-  // All meshData should be ready
-  static unsigned char uploadMesh(rtMesh mesh);
-  static unsigned char destroyMesh(rtMesh);
+// To avoid unnecessary RAM->RAM copies, get either staging or wait queue memory
+struct rtMesh* visMM_allocateMesh(unsigned int vertexCount, unsigned int indexCount,
+                                  void** meshData);
+// Uploads memory block of allocateMesh's meshData to GPU and validates rtMesh
+// All meshData should be ready
+unsigned char visMM_uploadMesh(struct rtMesh* mesh);
+unsigned char visMM_destroyMesh(struct rtMesh* mesh);
 
-  // Compute is to render meshes with ray tracing
-  static commandBundle_tgfxhnd renderMesh(unsigned int                           count,
-                                          const rtMeshManager::renderInfo* const infos);
-  static void                  frame();
-  static unsigned char      supportsMaterial(rtMaterial mat);
+// Compute is to render meshes with ray tracing
+commandBundle_tgfxhnd visMM_renderMesh(unsigned int count, const struct MM_renderInfo* const infos);
+void                  visMM_frame();
+unsigned char         visMM_supportsMaterial(struct rtMaterial* mat);
 
-  static void              initializeManager();
-  static rtMeshManagerType managerType();
-} rtVisibilityMeshManager;
+void                            visMM_initializeManager();
+const struct rtMeshManagerType* visMM_managerType();
+
+#ifdef __cplusplus
+}
+#endif

@@ -1,6 +1,7 @@
 #include <vector>
 
 #include <predefinitions_tapi.h>
+#include <tgfx_structs.h>
 
 #include "resourceManager.h"
 #include "shaderEffect.h"
@@ -9,23 +10,28 @@ static bool                            deserializeSE(rtResourceDesc* desc) { ret
 static bool                            isSEValid(void* dataHnd) { return false; }
 std::vector<rtShaderEffectManagerType> SEmts;
 struct shaderEffectManagerType_rt {
-  rtShaderEffectManager::managerDesc desc;
+  SEM_managerDesc desc;
 };
 rtResourceManagerType ShaderEffectRMT = {};
 
-rtResourceManagerType shaderEffectManager_rt::managerType() { return ShaderEffectRMT; }
+const struct rtResourceManagerType* SEM_managerType() { return ShaderEffectRMT; }
 
-rtShaderEffectManagerType shaderEffectManager_rt::registerManager(managerDesc desc) {
+void                   SEM_getBindingTableDesc(struct rtShaderEffect*                    shader,
+                                               const struct rtShaderEffectInstanceInput* instanceInput,
+                                               struct tgfx_binding_table_description*    desc) {}
+struct rtShaderEffect* SEM_getSE(const struct rtShaderEffectInstance* instance) { return nullptr; }
+
+const struct rtShaderEffectManagerType* SEM_registerManager(SEM_managerDesc desc) {
   shaderEffectManagerType_rt* SEmt = new shaderEffectManagerType_rt;
-  SEmt->desc                      = desc;
+  SEmt->desc                       = desc;
   SEmts.push_back(SEmt);
-  return Mmt;
+  return SEmt;
 }
-void shaderEffectManager_rt::initializeManager() {
-  rtResourceManager::managerDesc desc;
+void SEM_initializeManager() {
+  RM_managerDesc desc;
   desc.managerName = "ShaderEffect Resource Manager";
   desc.managerVer  = MAKE_PLUGIN_VERSION_TAPI(0, 0, 0);
   desc.deserialize = deserializeSE;
   desc.validate    = isSEValid;
-  ShaderEffectRMT  = rtResourceManager::registerManager(desc);
+  ShaderEffectRMT  = RM_registerManager(desc);
 }

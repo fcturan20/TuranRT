@@ -13,32 +13,32 @@
 #include "mesh.h"
 #include "scene.h"
 
-struct resource_rt {
+struct rtResource {
   std::string           filePath;
   bool                  isBinary;
   void*                 resourcePtr;
-  rtResourceManagerType resourceManager;
+  const rtResourceManagerType* resourceManager;
   // Manager infos isn't used for now
 };
 
 struct rtResourceManager_private {
-  static std::vector<rtResource>            resources;
-  static std::vector<rtResourceManagerType> managers;
+  static std::vector<rtResource*>            resources;
+  static std::vector<rtResourceManagerType*> managers;
   static uint32_t                           maxResourceTypeInt;
   static const char*                        listDiskPath;
 };
-std::vector<rtResource>            rtResourceManager_private::resources = {};
-std::vector<rtResourceManagerType> rtResourceManager_private::managers  = {};
+std::vector<rtResource*>            rtResourceManager_private::resources = {};
+std::vector<rtResourceManagerType*> rtResourceManager_private::managers  = {};
 
-struct resourceManagerType_rt {
+struct rtResourceManagerType {
   std::string                               managerName;
   uint32_t                                  managerVer;
-  rtResourceManager::deserializeResourceFnc deserialize;
-  rtResourceManager::isResourceValidFnc     validate;
+  RM_deserializeResourceFnc                 deserialize;
+  RM_isResourceValidFnc                     validate;
 };
 
-rtResource resourceManager_rt::createResource(rtResourceDesc desc) {
-  assert(desc.pathNameExt && "Resource path name should be valid!");
+struct rtResource* RM_createResource(const struct rtResourceDesc* desc) {
+  assert(desc->pathNameExt && "Resource path name should be valid!");
   /*
   if (!desc.managerType->validate(desc.resourceHnd)) {
     printf("Resource should be valid!");
@@ -49,17 +49,17 @@ rtResource resourceManager_rt::createResource(rtResourceDesc desc) {
   // With this way, rtResourceManager can automatically load resources at the startup and app can
   // get resource handles by describing them.
 
-  rtResource resource       = new resource_rt;
-  resource->filePath        = desc.pathNameExt;
-  resource->isBinary        = desc.isBinary;
-  resource->resourcePtr     = desc.resourceHnd;
-  resource->resourceManager = desc.managerType;
+  rtResource* resource       = new rtResource;
+  resource->filePath        = desc->pathNameExt;
+  resource->isBinary        = desc->isBinary;
+  resource->resourcePtr     = desc->resourceHnd;
+  resource->resourceManager = desc->managerType;
   rtResourceManager_private::resources.push_back(resource);
   return resource;
 }
 
-rtResourceManagerType resourceManager_rt::registerManager(managerDesc desc) {
-  resourceManagerType_rt* manager = new resourceManagerType_rt;
+const struct rtResourceManagerType* RM_registerManager(RM_managerDesc desc) {
+  rtResourceManagerType* manager  = new rtResourceManagerType;
   manager->deserialize            = desc.deserialize;
   manager->validate               = desc.validate;
   manager->managerName            = desc.managerName;
@@ -67,17 +67,17 @@ rtResourceManagerType resourceManager_rt::registerManager(managerDesc desc) {
   return manager;
 }
 
-bool resourceManager_rt::deserializeResource(rtResourceDesc* desc, rtResource* resourceHnd) {
-  for (rtResource resource : rtResourceManager_private::resources) {
+unsigned char RM_deserializeResource(const rtResourceDesc* desc, rtResource** resourceHnd) {
+  for (rtResource* resource : rtResourceManager_private::resources) {
     if (desc->isBinary == resource->isBinary &&
         !strcmp(desc->pathNameExt, resource->filePath.data())) {
       *resourceHnd = resource;
     }
   }
   if (!resourceHnd) {
-    *resourceHnd = createResource(*desc);
+    *resourceHnd = RM_createResource(desc);
   }
-  for (rtResourceManagerType manager : rtResourceManager_private::managers) {
+  for (rtResourceManagerType* manager : rtResourceManager_private::managers) {
     if (manager->deserialize(desc)) {
       (*resourceHnd)->resourcePtr = desc->resourceHnd;
       return true;
@@ -85,15 +85,15 @@ bool resourceManager_rt::deserializeResource(rtResourceDesc* desc, rtResource* r
   }
   return false;
 }
-extern rtResource* importFileUsingAssimp(const wchar_t* i_PATH, uint64_t* resourceCount);
-extern rtResource* importFileUsingGLTF(const wchar_t* i_PATH, uint64_t* resourceCount);
-rtResource* resourceManager_rt::importFile(const wchar_t* i_PATH, uint64_t* resourceCount) {
+extern struct rtResource** importFileUsingAssimp(const wchar_t* i_PATH, uint64_t* resourceCount);
+extern struct rtResource** importFileUsingGLTF(const wchar_t* i_PATH, uint64_t* resourceCount);
+struct rtResource**        RM_importFile(const wchar_t* i_PATH, uint64_t* resourceCount) {
   if (!importFileUsingGLTF(i_PATH, resourceCount)) {
     return importFileUsingAssimp(i_PATH, resourceCount);
   }
 }
 
-void* resourceManager_rt::getResourceHnd(rtResource resource, rtResourceManagerType& managerType) {
-  managerType = resource->resourceManager;
+void* RM_getResourceHnd(struct rtResource* resource, const struct rtResourceManagerType** managerType) {
+  *managerType = resource->resourceManager;
   return resource->resourcePtr;
 }

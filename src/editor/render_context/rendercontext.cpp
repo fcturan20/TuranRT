@@ -15,10 +15,10 @@
 
 #include "../editor_includes.h"
 #include "../resourceSys/shaderEffect.h"
-#include "rendererAllocator.h"
 #include "../resourceSys/resourceManager.h"
 #include "../resourceSys/mesh.h"
 #include "forwardMesh.h"
+#include "rendererAllocator.h"
 #include "rendercontext.h"
 
 tgfx_renderer*            renderer       = nullptr;
@@ -46,7 +46,7 @@ gpuQueue_tgfxhnd                          queue               = {};
 rasterpassBeginSlotInfo_tgfx              colorAttachmentInfo = {}, depthAttachmentInfo = {};
 tgfx_uvec2                                windowResolution = {1280, 720};
 static uint32_t                           GPU_INDEX        = 0;
-static rtGpuMemBlock                      m_gpuCustomDepthRT, m_gpuCamBuffer;
+static rtGpuMemBlock                      *m_gpuCustomDepthRT, *m_gpuCamBuffer;
 static uint32_t                           m_activeSwpchnIndx;
 static std::vector<commandBundle_tgfxhnd> m_uploadBundles, m_rasterBndls, m_computeBndls;
 static bindingTableDescription_tgfx       m_camBindingDesc = {}, m_swpchnStorageBindingDesc = {};
@@ -116,7 +116,7 @@ void createBuffersAndTextures() {
     m_gpuCamBuffer =
       allocateBuffer(sizeof(camUbo) * swapchainTextureCount,
                      bufferUsageMask_tgfx_COPYTO | bufferUsageMask_tgfx_STORAGEBUFFER,
-                     getGpuMemRegion(rtRenderer::UPLOAD));
+                     getGpuMemRegion(rtMemoryRegion_UPLOAD));
   }
 
 #ifdef NDEBUG
@@ -124,11 +124,11 @@ void createBuffersAndTextures() {
 #endif
 }
 
-void createBindingTables() {
+void createBindingTablesAndShaderEffects() {
   // Camera binding table
   {
-    m_camBindingDesc.DescriptorType     = shaderdescriptortype_tgfx_BUFFER;
-    m_camBindingDesc.ElementCount       = 1;
+    m_camBindingDesc.descriptorType     = shaderdescriptortype_tgfx_BUFFER;
+    m_camBindingDesc.elementCount       = 1;
     m_camBindingDesc.staticSamplers     = nullptr;
     m_camBindingDesc.staticSamplerCount = 0;
     m_camBindingDesc.visibleStagesMask  = shaderStage_tgfx_COMPUTESHADER |
@@ -146,8 +146,8 @@ void createBindingTables() {
   }
   // Swapchain texture's storage image binding table
   {
-    m_swpchnStorageBindingDesc.DescriptorType     = shaderdescriptortype_tgfx_STORAGEIMAGE;
-    m_swpchnStorageBindingDesc.ElementCount       = 1;
+    m_swpchnStorageBindingDesc.descriptorType     = shaderdescriptortype_tgfx_STORAGEIMAGE;
+    m_swpchnStorageBindingDesc.elementCount       = 1;
     m_swpchnStorageBindingDesc.staticSamplers     = nullptr;
     m_swpchnStorageBindingDesc.staticSamplerCount = 0;
     m_swpchnStorageBindingDesc.visibleStagesMask  = shaderStage_tgfx_COMPUTESHADER;
@@ -169,9 +169,9 @@ void rtRenderer::initialize(tgfx_windowKeyCallback keyCB) {
   createGPU();
   initMemRegions();
   createBuffersAndTextures();
-  createBindingTables();
+  createBindingTablesAndShaderEffects();
   createFirstWindow(keyCB);
-  rtForwardMeshManager::initializeManager();
+  forwardMM_initializeManager();
 
   renderer->createFences(gpu, 1, 0u, &fence);
   gpuQueue_tgfxhnd queuesPerFam[64];
@@ -308,7 +308,7 @@ void recreateSwapchain() {
     textureDesc.usage = textureUsageMask_tgfx_RENDERATTACHMENT | textureUsageMask_tgfx_COPYFROM |
                         textureUsageMask_tgfx_COPYTO;
 
-    m_gpuCustomDepthRT          = allocateTexture(textureDesc, getGpuMemRegion(rtRenderer::LOCAL));
+    m_gpuCustomDepthRT          = allocateTexture(textureDesc, getGpuMemRegion(rtMemoryRegion_LOCAL));
     depthAttachmentInfo.texture = ( texture_tgfxhnd )m_gpuCustomDepthRT->resource;
   }
 
@@ -376,4 +376,4 @@ const bindingTableDescription_tgfx* rtRenderer::getSwapchainStorageBindingDesc()
   return &m_swpchnStorageBindingDesc;
 }
 tgfx_uvec2           rtRenderer::getResolution() { return windowResolution; }
-tgfx_gpu_description rtRenderer::getGpuDesc() { return gpuDesc; }
+const tgfx_gpu_description* rtRenderer::getGpuDesc() { return &gpuDesc; }

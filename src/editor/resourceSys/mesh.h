@@ -1,51 +1,53 @@
 #pragma once
+#ifdef __cplusplus
+extern "C" {
+#endif
 // Include glm/glm.hpp & resourceManager.h before this
 
-typedef struct mesh_rt*            rtMesh;
-typedef struct meshManagerType_rt* rtMeshManagerType;
-typedef struct meshManager_rt {
-  ////////// USER INTERFACE
+////////// USER INTERFACE
 
-  struct renderInfo {
-    rtMesh mesh;
-    struct mat4_rt* transform;
-    struct shaderEffectInstance_rt* sei;
-  };
+struct MM_renderInfo {
+  struct rtMesh*                 mesh;
+  struct mat4_rt*                transform;
+  struct rtShaderEffectInstance* sei;
+};
 
-  static rtMesh allocateMesh(rtMeshManagerType Mmt, uint32_t vertexCount, uint32_t indexCount,
-                             void* extraInfo, void** meshData);
-  static unsigned char          uploadMeshes(unsigned int count, rtMesh* meshes);
-  static commandBundle_tgfxhnd* renderMeshes(unsigned int count, const renderInfo* const infos,
-                                             unsigned int* cmdBndleCount);
-  static unsigned char          destroyMeshes(unsigned int count, rtMesh* meshes);
-  static void                   frame();
+struct rtMesh* MM_allocateMesh(const struct rtMeshManagerType* Mmt, uint32_t vertexCount,
+                                      uint32_t indexCount, void* extraInfo, void** meshData);
+unsigned char  MM_uploadMeshes(unsigned int count, struct rtMesh** meshes);
+commandBundle_tgfxhnd* MM_renderMeshes(unsigned int count, const struct MM_renderInfo* const infos,
+                                              unsigned int* cmdBndleCount);
+unsigned char          MM_destroyMeshes(unsigned int count, struct rtMesh** meshes);
+void                   MM_frame();
 
-  ///////////////////////////
+///////////////////////////
 
-  ///////////// Mesh Manager Type (Mmt) definitions (Only for Mmt implementors)
+///////////// Mesh Manager Type (Mmt) definitions (Only for Mmt implementors)
 
-  // Extra info is manager specific data input (like vertex attribute info in visibilityMesh)
-  struct managerDesc {
-    const char* managerName;
-    uint32_t    managerVer;
-    uint32_t    meshStructSize;
-    rtMesh (*allocateMeshFnc)(uint32_t vertexCount, uint32_t indexCount, void* extraInfo,
-                              void** meshData);
-    unsigned char (*uploadMeshFnc)(rtMesh mesh);
-    unsigned char (*destroyMeshFnc)(rtMesh mesh);
-    commandBundle_tgfxhnd (*renderMeshFnc)(unsigned int count, const renderInfo* const infos);
-    void (*frameFnc)();
-    unsigned char (*supportsMaterialFnc)(struct surfaceShaderEffect_rt* mat);
-  };
-  // Only for Mmt implementors
-  static rtMeshManagerType registerManager(managerDesc desc);
-  // Only for Mmt implementors
-  static void* createMeshHandle(rtMeshManagerType managerType);
+// Extra info is manager specific data input (like vertex attribute info in visibilityMesh)
+typedef struct MM_managerDesc {
+  const char* managerName;
+  uint32_t    managerVer;
+  uint32_t    meshStructSize;
+  struct rtMesh* (*allocateMeshFnc)(uint32_t vertexCount, uint32_t indexCount, void* extraInfo,
+                                    void** meshData);
+  unsigned char (*uploadMeshFnc)(struct rtMesh* mesh);
+  unsigned char (*destroyMeshFnc)(struct rtMesh* mesh);
+  commandBundle_tgfxhnd (*renderMeshFnc)(unsigned int count, const struct MM_renderInfo* const infos);
+  void (*frameFnc)();
+  unsigned char (*supportsSEFnc)(struct rtSurfaceShaderEffect* mat);
+} MM_managerDesc;
+// Only for Mmt implementors
+const struct rtMeshManagerType* MM_registerManager(MM_managerDesc desc);
+// Only for Mmt implementors
+void* MM_createMeshHandle(const struct rtMeshManagerType* managerType);
 
-  ////////////////////////////
+////////////////////////////
 
-  // Resource Manager Type (Rmt) implementation
-  typedef rtMesh               defaultResourceType;
-  static rtResourceManagerType managerType();
-  static void                  initializeManager();
-} rtMeshManager;
+// Resource Manager Type (Rmt) implementation
+const struct rtResourceManagerType* MM_managerType();
+void                                MM_initializeManager();
+
+#ifdef __cplusplus
+}
+#endif

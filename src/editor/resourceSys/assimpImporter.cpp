@@ -19,10 +19,9 @@
 #include "scene.h"
 
 #ifdef AI_ASSIMP_HPP_INC
-rtMesh createForwardMesh(aiMesh* aMesh) {
-  void*  meshData = nullptr;
-  rtMesh mesh =
-    rtForwardMeshManager::allocateMesh(aMesh->mNumVertices, aMesh->mNumFaces * 3, &meshData);
+rtMesh* createForwardMesh(aiMesh* aMesh) {
+  void*   meshData = nullptr;
+  rtMesh* mesh = forwardMM_allocateMesh(aMesh->mNumVertices, aMesh->mNumFaces * 3, &meshData);
 
   rtForwardVertex* vertexBuffer = ( rtForwardVertex* )meshData;
   uint32_t*        indexBuffer =
@@ -51,15 +50,16 @@ rtMesh createForwardMesh(aiMesh* aMesh) {
       indexBuffer[(faceIndx * 3) + v] = aMesh->mFaces[faceIndx].mIndices[v];
     }
   }
-  rtForwardMeshManager::forwardMesh_uploadFnc(mesh);
+  MM_uploadMeshes(1, &mesh);
   return mesh;
 }
 #endif
 #ifdef AI_ASSIMP_HPP_INC
-void fillEntity(rtScene scene, entityHnd_ecstapi ntt, aiNode* node, rtMesh* const meshes) {
-  compType_ecstapi  compType = {};
+void fillEntity(struct rtScene* scene, entityHnd_ecstapi ntt, aiNode* node,
+                struct rtMesh** const meshes) {
+  compType_ecstapi     compType = {};
   defaultComponent_rt* comp     = ( defaultComponent_rt* )editorECS->get_component_byEntityHnd(
-    ntt, defaultComponent_rt::getDefaultComponentTypeID(), &compType);
+    ntt, getDefaultComponentTypeID(), &compType);
   assert(comp && "Default component isn't found!");
   comp->m_meshes.resize(node->mNumMeshes);
   for (uint32_t i = 0; i < node->mNumMeshes; i++) {
@@ -72,18 +72,18 @@ void fillEntity(rtScene scene, entityHnd_ecstapi ntt, aiNode* node, rtMesh* cons
   }
   comp->m_children.resize(node->mNumChildren);
   for (uint32_t i = 0; i < node->mNumChildren; i++) {
-    comp->m_children[i] = rtSceneModifier::addDefaultEntity(scene);
+    comp->m_children[i] = SM_addDefaultEntity(scene);
     fillEntity(scene, comp->m_children[i], node->mChildren[i], meshes);
   }
 }
-void createEntitiesWithAssimp(rtScene scene, aiNode* rootNode,
-                                                rtMesh* const meshes) {
-  entityHnd_ecstapi rootNtt = rtSceneModifier::addDefaultEntity(scene);
+void createEntitiesWithAssimp(struct rtScene* scene, aiNode* rootNode,
+                              struct rtMesh** const meshes) {
+  entityHnd_ecstapi rootNtt = SM_addDefaultEntity(scene);
   fillEntity(scene, rootNtt, rootNode, meshes);
 }
 #endif // ASSIMP
 
-rtResource* importFileUsingAssimp(const wchar_t* i_PATH, uint64_t* resourceCount) {
+struct rtResource** importFileUsingAssimp(const wchar_t* i_PATH, uint64_t* resourceCount) {
   Assimp::Importer          import;
   const aiScene*            aScene              = nullptr;
   static constexpr uint32_t maxPathLen          = 2048;
@@ -103,17 +103,17 @@ rtResource* importFileUsingAssimp(const wchar_t* i_PATH, uint64_t* resourceCount
     }
   }
 
-  std::vector<rtResource> resources;
-  std::vector<rtMesh>     meshes;
+  std::vector<struct rtResource*> resources;
+  std::vector<struct rtMesh*>     meshes;
   for (uint32_t i = 0; i < aScene->mNumMeshes; i++) {
-    rtMesh mesh = createForwardMesh(aScene->mMeshes[i]);
+    rtMesh* mesh = createForwardMesh(aScene->mMeshes[i]);
     if (!mesh) {
       continue;
     }
     meshes.push_back(mesh);
 
     rtResourceDesc resourceDesc = {};
-    resourceDesc.managerType    = rtMeshManager::managerType();
+    resourceDesc.managerType    = MM_managerType();
     resourceDesc.resourceHnd    = mesh;
     std::string meshName        = SOURCE_DIR "Content/Meshes/";
 
@@ -128,14 +128,14 @@ rtResource* importFileUsingAssimp(const wchar_t* i_PATH, uint64_t* resourceCount
     }
 
     resourceDesc.pathNameExt = meshName.c_str();
-    resources.push_back(rtResourceManager::createResource(resourceDesc));
+    resources.push_back(RM_createResource(&resourceDesc));
   }
 
   {
-    rtScene scene = rtSceneManager::createScene();
+    struct rtScene* scene = SM_createScene();
     createEntitiesWithAssimp(scene, aScene->mRootNode, meshes.data());
     rtResourceDesc resourceDesc = {};
-    resourceDesc.managerType    = rtSceneManager::managerType();
+    resourceDesc.managerType    = SM_managerType();
     resourceDesc.resourceHnd    = scene;
     std::string meshName        = SOURCE_DIR "Content/Scenes/";
 
@@ -146,11 +146,11 @@ rtResource* importFileUsingAssimp(const wchar_t* i_PATH, uint64_t* resourceCount
     }
     resourceDesc.pathNameExt = meshName.c_str();
 
-    resources.push_back(rtResourceManager::createResource(resourceDesc));
+    resources.push_back(RM_createResource(&resourceDesc));
   }
 
-  rtResource* finalList = new rtResource[resources.size()];
-  memcpy(finalList, resources.data(), resources.size() * sizeof(rtResource));
+  struct rtResource** finalList = new rtResource*[resources.size()];
+  memcpy(finalList, resources.data(), resources.size() * sizeof(struct rtResource*));
   *resourceCount = resources.size();
   return finalList;
 }

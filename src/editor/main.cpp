@@ -27,7 +27,7 @@
 #include "tgfx_core.h"
 
 // TGFX headers
-#include "tgfx_forwarddeclarations.h"
+#include <tgfx_forwarddeclarations.h>
 
 // RTEditor headers
 #include "editor_includes.h"
@@ -37,7 +37,6 @@
 #include "resourceSys/scene.h"
 #include "systems/input.h"
 #include "systems/camera.h"
-
 
 unittestsys_tapi*   unitTestSys  = {};
 allocator_sys_tapi* allocatorSys = {};
@@ -61,37 +60,36 @@ void load_plugins() {
       printf("%s plugin is loaded but system isn't!", pluginNames[i]);
     }
   }
-#define getSystemPtrRT(name) \
-  (( name##_PLUGIN_LOAD_TYPE )editorECS->getSystem(name##_PLUGIN_NAME))
+#define getSystemPtrRT(name) (( name##_PLUGIN_LOAD_TYPE )editorECS->getSystem(name##_PLUGIN_NAME))
 
-  stringSys = getSystemPtrRT(STRINGSYS_TAPI)->standardString;
+  stringSys   = getSystemPtrRT(STRINGSYS_TAPI)->standardString;
   profilerSys = getSystemPtrRT(PROFILER_TAPI)->funcs;
   logSys      = getSystemPtrRT(LOGGER_TAPI)->funcs;
   logSys->init(string_type_tapi_UTF8, "mainLog.txt");
   allocatorSys = getSystemPtrRT(ALLOCATOR_TAPI);
   fileSys      = getSystemPtrRT(FILESYS_TAPI)->funcs;
-  tgfx = getSystemPtrRT(TGFX)->api;
+  tgfx         = getSystemPtrRT(TGFX)->api;
 }
 
 void load_systems() {
   load_plugins();
 
-  rtMeshManager::initializeManager();
-  rtSceneManager::initializeManager();
+  MM_initializeManager();
+  SM_initializeManager();
   rtRenderer::initialize(rtInputSystem::getCallback());
 
-  uint64_t    resourceCount  = {};
-  rtResource* firstResources = rtResourceManager::importFile( // SOURCE_DIR "Content/cube.glb"
+  uint64_t            resourceCount  = {};
+  struct rtResource** firstResources = RM_importFile( // SOURCE_DIR "Content/cube.glb"
     SOURCE_DIR L"Content/Gun.glb"
     //"D:\\Desktop\\Meshes\\Bakery\\scene.gltf"
     ,
     &resourceCount);
-  rtScene     firstScene     = {};
+  struct rtScene*     firstScene     = {};
   for (uint32_t resourceIndx = 0; resourceIndx < resourceCount; resourceIndx++) {
-    rtResourceManagerType type = {};
-    void* resHnd = rtResourceManager::getResourceHnd(firstResources[resourceIndx], type);
-    if (type == rtSceneManager::managerType()) {
-      firstScene = ( rtScene )resHnd;
+    const rtResourceManagerType* type   = {};
+    void*                        resHnd = RM_getResourceHnd(firstResources[resourceIndx], &type);
+    if (type == SM_managerType()) {
+      firstScene = ( struct rtScene* )resHnd;
     }
   }
 
@@ -109,8 +107,8 @@ void load_systems() {
     rtCameraController::update();
     rtRenderer::getSwapchainTexture();
 
-    rtMeshManager::frame();
-    rtSceneModifier::renderScene(firstScene);
+    MM_frame();
+    SM_renderScene(firstScene);
     rtRenderer::renderFrame();
     profilerSys->finish_profiling(&frameScope);
     logSys->log(log_type_tapi_STATUS, false, L"Frame #%u & Duration %lu microseconds", i, duration);

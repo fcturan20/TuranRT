@@ -10,15 +10,18 @@
 #include <tgfx_gpucontentmanager.h>
 #include <tgfx_structs.h>
 
-#include "../render_context/rendercontext.h"
 #include "../resourceSys/resourceManager.h"
 #include "../editor_includes.h"
 #include "../resourceSys/mesh.h"
+#include "../resourceSys/shaderEffect.h"
+#include "../resourceSys/surfaceSE.h"
 #include "forwardMesh.h"
+#include "../render_context/rendererAllocator.h"
+#include "../render_context/rendercontext.h"
 
-char_c                         attribNames[]            = {"POSITION", "TEXCOORD_0", "NORMAL"};
-uint32_sc                       attribCount              = length_c(attribNames);
-uint32_sc                       attribElementSize[]      = {3 * 4, 2 * 4, 3 * 4};
+char_c                         attribNames[]            = {"POSITION", "TEXCOORD0", "NORMAL"};
+uint32_sc                      attribCount              = length_c(attribNames);
+uint32_sc                      attribElementSize[]      = {3 * 4, 2 * 4, 3 * 4};
 static constexpr datatype_tgfx attribElementTypesTgfx[] = {
   datatype_tgfx_VAR_VEC3, datatype_tgfx_VAR_VEC2, datatype_tgfx_VAR_VEC3};
 static_assert(length_c(attribElementSize) == attribCount &&
@@ -29,8 +32,8 @@ static_assert(length_c(attribElementSize) == attribCount &&
 // It's important because each mesh will operate a instanced indirect draw call
 static constexpr uint32_t RT_MAXDEFAULTMESH_MESHCOUNT = 1024, RT_MAXTRANSFORMBUFFER_SIZE = 4 << 20;
 
-rtGpuMemBlock gpuVertexBuffer = {}, gpuIndexBuffer = {}, gpuDrawIndirectBuffer = {},
-              gpuComputeIndirectBuffer = {}, transformsBuffer[swapchainTextureCount] = {};
+rtGpuMemBlock *gpuVertexBuffer = {}, *gpuIndexBuffer = {}, *gpuDrawIndirectBuffer = {},
+              *gpuComputeIndirectBuffer = {}, *transformsBuffer[swapchainTextureCount] = {};
 std::vector<commandBundle_tgfxhnd> uploadBundleList   = {};
 pipeline_tgfxhnd                   meshRasterPipeline = {}, meshComputePipeline = {};
 bindingTableDescription_tgfx       transformBindingDesc = {}, indirectDrawBindingTableDesc;
@@ -41,27 +44,26 @@ bindingTable_tgfxhnd               transformBindingTables[swapchainTextureCount]
 indirectOperationType_tgfx rasterOperationList[RT_MAXDEFAULTMESH_MESHCOUNT]      = {},
                            rtOperationList[RT_MAXDEFAULTMESH_MESHCOUNT]          = {};
 std::vector<commandBundle_tgfxhnd> m_bundles[swapchainTextureCount];
-rtMeshManagerType                  Mmt = {};
+const rtMeshManagerType*           Mmt = {};
 
-struct forwardMesh_rt {
+struct rtForwardMesh {
   uint32_t m_gpuVertexOffset = 0, m_gpuIndexOffset = 0;
   bool     isAlive = false;
   // Optional parameters
   // Because mesh data will be in GPU-side as default
   // If user wants to access buffer, GPU->CPU copy is necessary
-  void*         m_data;
-  uint32_t      m_vertexCount, m_indexCount;
-  rtGpuMemBlock m_stagingBlock;
+  void*          m_data;
+  uint32_t       m_vertexCount, m_indexCount;
+  rtGpuMemBlock* m_stagingBlock;
 };
-typedef struct forwardMesh_rt* rtForwardMesh;
-std::vector<rtForwardMesh>     meshes = {}, uploadQueue = {};
+std::vector<rtForwardMesh*> meshes = {}, uploadQueue = {};
 
-rtMeshManagerType forwardMeshManager_rt::managerType() { return Mmt; }
-rtMesh            forwardMeshManager_rt::allocateMesh(uint32_t vertexCount, uint32_t indexCount,
-                                                      void** meshData) {
+const rtMeshManagerType* forwardMM_managerType() { return Mmt; }
+rtMesh* forwardMM_allocateMesh(uint32_t vertexCount, uint32_t indexCount,
+                                            void** meshData) {
   uint32_t      maxVertexOffset = 0, maxIndexOffset = 0;
-  rtForwardMesh mesh = {};
-  for (rtForwardMesh searchMesh : meshes) {
+  rtForwardMesh* mesh = {};
+  for (rtForwardMesh* searchMesh : meshes) {
     maxVertexOffset =
       glm::max(maxVertexOffset, searchMesh->m_vertexCount + searchMesh->m_gpuVertexOffset);
     maxIndexOffset =
@@ -73,7 +75,7 @@ rtMesh            forwardMeshManager_rt::allocateMesh(uint32_t vertexCount, uint
     mesh = searchMesh;
   }
   if (!mesh) {
-    mesh                    = ( rtForwardMesh )rtMeshManager::createMeshHandle(Mmt);
+    mesh                    = ( rtForwardMesh* )MM_createMeshHandle(Mmt);
     mesh->m_gpuVertexOffset = maxVertexOffset;
     mesh->m_gpuIndexOffset  = maxIndexOffset;
     meshes.push_back(mesh);
@@ -85,7 +87,7 @@ rtMesh            forwardMeshManager_rt::allocateMesh(uint32_t vertexCount, uint
   uint32_t stagingBufferSize =
     (mesh->m_vertexCount * sizeof(rtForwardVertex)) + (mesh->m_indexCount * sizeof(uint32_t));
   mesh->m_stagingBlock = rtRenderer::allocateMemoryBlock(bufferUsageMask_tgfx_COPYFROM,
-                                                                    stagingBufferSize, rtRenderer::UPLOAD);
+                                                         stagingBufferSize, rtMemoryRegion_UPLOAD);
 
   // Can't use staging memory, keep it in RAM to upload later
   if (mesh->m_stagingBlock) {
@@ -95,11 +97,13 @@ rtMesh            forwardMeshManager_rt::allocateMesh(uint32_t vertexCount, uint
   }
   *meshData = mesh->m_data;
 
-  return ( rtMesh )mesh;
+  return ( rtMesh* )mesh;
 }
 
-unsigned char forwardMeshManager_rt::forwardMesh_uploadFnc(rtMesh i_mesh) {
-  rtForwardMesh mesh = ( rtForwardMesh )i_mesh;
+// Uploads memory block of allocateMesh's meshData to GPU and validates rtMesh
+// All meshData should be ready
+unsigned char forwardMesh_uploadFnc(rtMesh* i_mesh) {
+  rtForwardMesh* mesh = ( rtForwardMesh* )i_mesh;
   // If there is no space in upload memory, push to queue to upload later
   if (!mesh->m_stagingBlock) {
     uploadQueue.push_back(mesh);
@@ -120,15 +124,18 @@ unsigned char forwardMeshManager_rt::forwardMesh_uploadFnc(rtMesh i_mesh) {
   uploadBundleList.push_back(copyBundle);
   return true;
 }
-unsigned char forwardMeshManager_rt::forwardMesh_destroyFnc(rtMesh) { return true; }
+unsigned char forwardMesh_destroyFnc(rtMesh* i_mesh) { return true; }
 
 struct renderList {
-  rtForwardMesh        m_mesh;
+  rtForwardMesh*        m_mesh;
   std::vector<mat4_rt> m_transforms;
 };
-commandBundle_tgfxhnd forwardMeshManager_rt::forwardMesh_renderFnc(
-  unsigned int count, const rtMeshManager::renderInfo* const infos) {
-  uint32_t frameIndx = rtRenderer::getFrameIndx();
+commandBundle_tgfxhnd forwardMesh_renderFnc(unsigned int                           count,
+                                            const MM_renderInfo* const infos) {
+  uint32_t         frameIndx = rtRenderer::getFrameIndx();
+  struct rtShaderEffect*   se        = SEM_getSE(infos[0].sei);
+  pipeline_tgfxhnd pipe =
+    SSEM_getPipeline(( struct rtSurfaceShaderEffect* )se, Mmt);
 
   if (m_bundles[frameIndx].size()) {
     for (commandBundle_tgfxhnd bndle : m_bundles[frameIndx]) {
@@ -144,7 +151,7 @@ commandBundle_tgfxhnd forwardMeshManager_rt::forwardMesh_renderFnc(
   for (uint32_t infoIndx = 0; infoIndx < count; infoIndx++) {
     bool isFound = false;
     for (renderList& r : renders) {
-      if (r.m_mesh == ( rtForwardMesh )infos[infoIndx].mesh) {
+      if (r.m_mesh == ( rtForwardMesh* )infos[infoIndx].mesh) {
         r.m_transforms.push_back(*infos[infoIndx].transform);
         isFound = true;
         break;
@@ -152,7 +159,7 @@ commandBundle_tgfxhnd forwardMeshManager_rt::forwardMesh_renderFnc(
     }
     if (!isFound) {
       renderList r = {};
-      r.m_mesh     = ( rtForwardMesh )infos[infoIndx].mesh;
+      r.m_mesh     = ( rtForwardMesh* )infos[infoIndx].mesh;
       r.m_transforms.push_back(*infos[infoIndx].transform);
       renders.push_back(r);
     }
@@ -274,7 +281,7 @@ commandBundle_tgfxhnd forwardMeshManager_rt::forwardMesh_renderFnc(
   m_bundles[frameIndx].push_back(bundle);
   return bundle;
 }
-void forwardMeshManager_rt::forwardMesh_frameFnc() {
+void forwardMesh_frameFnc() {
   for (commandBundle_tgfxhnd bndl : uploadBundleList) {
     rtRenderer::upload(bndl);
   }
@@ -282,12 +289,97 @@ void forwardMeshManager_rt::forwardMesh_frameFnc() {
   // Clear staging memory uploads, then copy queued meshes to staging memory
 }
 
-rtMesh forwardMesh_allocateFnc(uint32_t vertexCount, uint32_t indexCount, void* extraInfo,
+rtMesh* forwardMesh_allocateFnc(uint32_t vertexCount, uint32_t indexCount, void* extraInfo,
                                void** meshData) {
-  return rtForwardMeshManager::allocateMesh(vertexCount, indexCount, meshData);
+  return forwardMM_allocateMesh(vertexCount, indexCount, meshData);
 }
-void forwardMeshManager_rt::initializeManager() {
-  rtMeshManager::managerDesc desc;
+
+static constexpr char
+  fragCode_load_TEXTCOORD0[] =
+    "layout(location = 0) in vec2 textCoord; vec2 load_TEXTCOORD0(){return textCoord;}",
+  fragCode_load_NORMAL[] =
+    "layout(location = 1) in vec3 vertNormal; vec3 load_NORMAL(){return vertNormal;}",
+  fragCode_MAIN[] =
+    "layout(location = 0) out vec4 outColor; void main() {outColor = surface_shading();}";
+static constexpr wchar_t* notSupportedSE =
+  L"Surface SE isn't supported by the forward mesh manager";
+inline shaderSource_tgfxhnd compileFragmentShader(const char* shadingCode) {
+  char* fragCode = nullptr;
+  stringSys->createString(string_type_tapi_UTF8, ( void** )&fragCode,
+                          L"#version 450\n%s\n%s\n%s\n%s", fragCode_load_TEXTCOORD0,
+                          fragCode_load_NORMAL, shadingCode, fragCode_MAIN);
+  shaderSource_tgfxhnd fragmentShader = nullptr;
+  contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
+                                      shaderStage_tgfx_FRAGMENTSHADER, fragCode, strlen(fragCode),
+                                      &fragmentShader);
+  free(fragCode);
+  return fragmentShader;
+}
+
+rasterStateDescription_tgfx     CONST_stateDesc = {};
+vertexAttributeDescription_tgfx CONST_attribs[attribCount];
+vertexBindingDescription_tgfx   CONST_bindings[1];
+shaderSource_tgfxhnd            firstVertShader;
+unsigned char                   forwardMesh_supportsSEfnc(struct rtSurfaceShaderEffect* se) {
+#define earlyExit()                                    \
+  logSys->log(log_type_tapi_ERROR, 0, notSupportedSE); \
+  return 0
+
+  const auto& props = SSEM_getSurfaceSEProps(se);
+  if (props.attribCount > attribCount || props.language != shaderlanguages_tgfx_GLSL ||
+      props.WPO_code) {
+    earlyExit();
+  }
+  for (uint32_t i = 0; i < props.attribCount; i++) {
+    const auto& attribName     = props.attribNames[i];
+    const auto& attribDataType = props.dataTypes[i];
+    bool        isFound        = false;
+    for (uint32_t s = 0; s < attribCount && !isFound; s++) {
+      if (attribDataType == attribElementTypesTgfx[s] && strcmp(attribName, attribNames[s]) == 0 &&
+          props.inputRates[s] == vertexBindingInputRate_tgfx_VERTEX) {
+        isFound = true;
+      }
+    }
+    if (!isFound) {
+      earlyExit();
+    }
+  }
+
+  shaderSource_tgfxhnd fragmentShader = compileFragmentShader(props.shading_code);
+  if (!fragmentShader) {
+    earlyExit();
+  }
+
+  pipeline_tgfxhnd pipe = nullptr;
+  {
+    rasterPipelineDescription_tgfx pipeDesc = {};
+    pipeDesc.attribLayout.attribCount       = attribCount;
+    pipeDesc.attribLayout.bindingCount      = 1;
+    pipeDesc.attribLayout.i_attributes      = CONST_attribs;
+    pipeDesc.attribLayout.i_bindings        = CONST_bindings;
+    rtRenderer::getRTFormats(&pipeDesc);
+    pipeDesc.extCount               = 0;
+    pipeDesc.mainStates             = &CONST_stateDesc;
+    pipeDesc.shaderCount            = 2;
+    shaderSource_tgfxhnd shaders[2] = {firstVertShader, fragmentShader};
+    pipeDesc.shaders                = shaders;
+
+    bindingTableDescription_tgfx tables[32] = {};
+    for (uint32_t i = 0; i < props.instanceInputCount && i < 16; i++) {
+      SEM_getBindingTableDesc((rtShaderEffect*)se, props.inputs[i], &tables[i]);
+    }
+    pipeDesc.tableCount = props.instanceInputCount;
+    pipeDesc.tables     = tables;
+
+    contentManager->createRasterPipeline(&pipeDesc, &pipe);
+    SSEM_addPipeline(se, pipe, Mmt);
+  }
+
+  return 1;
+}
+
+void forwardMM_initializeManager() {
+  MM_managerDesc desc;
   desc.managerName     = "Forward Mesh Manager";
   desc.managerVer      = MAKE_PLUGIN_VERSION_TAPI(0, 0, 0);
   desc.allocateMeshFnc = forwardMesh_allocateFnc;
@@ -295,57 +387,58 @@ void forwardMeshManager_rt::initializeManager() {
   desc.renderMeshFnc   = forwardMesh_renderFnc;
   desc.uploadMeshFnc   = forwardMesh_uploadFnc;
   desc.destroyMeshFnc  = forwardMesh_destroyFnc;
-  desc.meshStructSize  = sizeof(forwardMesh_rt);
-  Mmt                  = rtMeshManager::registerManager(desc);
+  desc.supportsSEFnc   = forwardMesh_supportsSEfnc;
+  desc.meshStructSize  = sizeof(rtForwardMesh);
+  Mmt                  = MM_registerManager(desc);
 
   gpuVertexBuffer = rtRenderer::allocateMemoryBlock(bufferUsageMask_tgfx_COPYTO |
                                                       bufferUsageMask_tgfx_VERTEXBUFFER |
                                                       bufferUsageMask_tgfx_STORAGEBUFFER,
-                                                    16ull << 20);
+                                                    16ull << 20, rtMemoryRegion_LOCAL);
 
   gpuIndexBuffer =
     rtRenderer::allocateMemoryBlock(bufferUsageMask_tgfx_COPYTO | bufferUsageMask_tgfx_INDEXBUFFER |
                                       bufferUsageMask_tgfx_STORAGEBUFFER,
-                                    16ull << 20);
+                                    16ull << 20, rtMemoryRegion_LOCAL);
 
   gpuDrawIndirectBuffer = rtRenderer::allocateMemoryBlock(
     bufferUsageMask_tgfx_COPYTO | bufferUsageMask_tgfx_INDIRECTBUFFER |
       bufferUsageMask_tgfx_STORAGEBUFFER,
-    RT_MAXDEFAULTMESH_MESHCOUNT * sizeof(tgfx_indirect_argument_draw_indexed), rtRenderer::UPLOAD);
+    RT_MAXDEFAULTMESH_MESHCOUNT * sizeof(tgfx_indirect_argument_draw_indexed),
+    rtMemoryRegion_UPLOAD);
 
   gpuComputeIndirectBuffer = rtRenderer::allocateMemoryBlock(
     bufferUsageMask_tgfx_COPYTO | bufferUsageMask_tgfx_INDIRECTBUFFER,
-    RT_MAXDEFAULTMESH_MESHCOUNT * sizeof(tgfx_indirect_argument_dispatch), rtRenderer::UPLOAD);
+    RT_MAXDEFAULTMESH_MESHCOUNT * sizeof(tgfx_indirect_argument_dispatch), rtMemoryRegion_UPLOAD);
 
   for (uint32_t i = 0; i < swapchainTextureCount; i++) {
     transformsBuffer[i] = rtRenderer::allocateMemoryBlock(
       bufferUsageMask_tgfx_COPYTO | bufferUsageMask_tgfx_STORAGEBUFFER, RT_MAXTRANSFORMBUFFER_SIZE,
-      rtRenderer::UPLOAD);
+      rtMemoryRegion_UPLOAD);
   }
 
   // Compile vertex shader
-  shaderSource_tgfxhnd firstVertShader;
   {
     const char* vertShaderText = ( const char* )fileSys->read_textfile(
       string_type_tapi_UTF8, SOURCE_DIR "Content/firstShader.vert", string_type_tapi_UTF8);
     contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
-                                        shaderStage_tgfx_VERTEXSHADER, ( void* )vertShaderText,
+                                        shaderStage_tgfx_VERTEXSHADER, vertShaderText,
                                         strlen(vertShaderText), &firstVertShader);
   }
 
   // Create binding types
   {
     transformBindingDesc                    = {};
-    transformBindingDesc.DescriptorType     = shaderdescriptortype_tgfx_BUFFER;
-    transformBindingDesc.ElementCount       = RT_MAXDEFAULTMESH_MESHCOUNT;
+    transformBindingDesc.descriptorType     = shaderdescriptortype_tgfx_BUFFER;
+    transformBindingDesc.elementCount       = RT_MAXDEFAULTMESH_MESHCOUNT;
     transformBindingDesc.staticSamplerCount = 0;
     transformBindingDesc.visibleStagesMask =
       shaderStage_tgfx_VERTEXSHADER | shaderStage_tgfx_COMPUTESHADER;
     transformBindingDesc.isDynamic = true;
 
     indirectDrawBindingTableDesc                    = {};
-    indirectDrawBindingTableDesc.DescriptorType     = shaderdescriptortype_tgfx_BUFFER;
-    indirectDrawBindingTableDesc.ElementCount       = 1;
+    indirectDrawBindingTableDesc.descriptorType     = shaderdescriptortype_tgfx_BUFFER;
+    indirectDrawBindingTableDesc.elementCount       = 1;
     indirectDrawBindingTableDesc.isDynamic          = true;
     indirectDrawBindingTableDesc.staticSamplerCount = 0;
     indirectDrawBindingTableDesc.visibleStagesMask  = shaderStage_tgfx_COMPUTESHADER;
@@ -378,14 +471,12 @@ void forwardMeshManager_rt::initializeManager() {
                                           false, &meshComputePipeline);
   }
 
-  // Compile raster pipeline
+  // Prepare raster pipeline settings
   {
-    vertexAttributeDescription_tgfx attribs[attribCount];
-    vertexBindingDescription_tgfx   bindings[1];
     {
       uint32_t elementOffset = 0;
       for (uint32_t i = 0; i < attribCount; i++) {
-        auto& attrib         = attribs[i];
+        auto& attrib         = CONST_attribs[i];
         attrib.attributeIndx = i;
         attrib.bindingIndx   = 0;
         attrib.dataType      = attribElementTypesTgfx[i];
@@ -393,43 +484,25 @@ void forwardMeshManager_rt::initializeManager() {
         elementOffset += attribElementSize[i];
       }
 
-      bindings[0].bindingIndx = 0;
-      bindings[0].inputRate   = vertexBindingInputRate_tgfx_VERTEX;
-      bindings[0].stride      = elementOffset;
+      CONST_bindings[0].bindingIndx = 0;
+      CONST_bindings[0].inputRate   = vertexBindingInputRate_tgfx_VERTEX;
+      CONST_bindings[0].stride      = elementOffset;
     }
 
-    rasterStateDescription_tgfx stateDesc         = {};
-    stateDesc.culling                             = cullmode_tgfx_BACK;
-    stateDesc.polygonmode                         = polygonmode_tgfx_FILL;
-    stateDesc.topology                            = vertexlisttypes_tgfx_TRIANGLELIST;
-    stateDesc.depthStencilState.depthTestEnabled  = true;
-    stateDesc.depthStencilState.depthWriteEnabled = true;
-    stateDesc.depthStencilState.depthCompare      = compare_tgfx_LEQUAL;
-    stateDesc.blendStates[0].blendEnabled         = false;
-    stateDesc.blendStates[0].blendComponents      = textureComponentMask_tgfx_ALL;
-    stateDesc.blendStates[0].alphaMode            = blendmode_tgfx_MAX;
-    stateDesc.blendStates[0].colorMode            = blendmode_tgfx_ADDITIVE;
-    stateDesc.blendStates[0].dstAlphaFactor       = blendfactor_tgfx_DST_ALPHA;
-    stateDesc.blendStates[0].srcAlphaFactor       = blendfactor_tgfx_SRC_ALPHA;
-    stateDesc.blendStates[0].dstColorFactor       = blendfactor_tgfx_DST_COLOR;
-    stateDesc.blendStates[0].srcColorFactor       = blendfactor_tgfx_SRC_COLOR;
-    rasterPipelineDescription_tgfx pipelineDesc   = {};
-    rtRenderer::getRTFormats(&pipelineDesc);
-    pipelineDesc.mainStates                = &stateDesc;
-    shaderSource_tgfxhnd shaderSources[2]  = {firstVertShader, rtRenderer::getDefaultFragShader()};
-    pipelineDesc.shaderCount               = 2;
-    pipelineDesc.shaders                   = shaderSources;
-    pipelineDesc.attribLayout.attribCount  = 3;
-    pipelineDesc.attribLayout.bindingCount = 1;
-    pipelineDesc.attribLayout.i_attributes = attribs;
-    pipelineDesc.attribLayout.i_bindings   = bindings;
-    bindingTableDescription_tgfx bindingTypes[2] = {*rtRenderer::getCamBindingDesc(),
-                                                    transformBindingDesc};
-    pipelineDesc.tables                          = bindingTypes;
-    pipelineDesc.tableCount                      = 2;
-
-    contentManager->createRasterPipeline(&pipelineDesc, &meshRasterPipeline);
-    contentManager->destroyShaderSource(firstVertShader);
+    CONST_stateDesc.culling                             = cullmode_tgfx_BACK;
+    CONST_stateDesc.polygonmode                         = polygonmode_tgfx_FILL;
+    CONST_stateDesc.topology                            = vertexlisttypes_tgfx_TRIANGLELIST;
+    CONST_stateDesc.depthStencilState.depthTestEnabled  = true;
+    CONST_stateDesc.depthStencilState.depthWriteEnabled = true;
+    CONST_stateDesc.depthStencilState.depthCompare      = compare_tgfx_LEQUAL;
+    CONST_stateDesc.blendStates[0].blendEnabled         = false;
+    CONST_stateDesc.blendStates[0].blendComponents      = textureComponentMask_tgfx_ALL;
+    CONST_stateDesc.blendStates[0].alphaMode            = blendmode_tgfx_MAX;
+    CONST_stateDesc.blendStates[0].colorMode            = blendmode_tgfx_ADDITIVE;
+    CONST_stateDesc.blendStates[0].dstAlphaFactor       = blendfactor_tgfx_DST_ALPHA;
+    CONST_stateDesc.blendStates[0].srcAlphaFactor       = blendfactor_tgfx_SRC_ALPHA;
+    CONST_stateDesc.blendStates[0].dstColorFactor       = blendfactor_tgfx_DST_COLOR;
+    CONST_stateDesc.blendStates[0].srcColorFactor       = blendfactor_tgfx_SRC_COLOR;
   }
 
   // Fill indirect operation type list

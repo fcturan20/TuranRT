@@ -1,4 +1,7 @@
 #pragma once
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 // Acronyms: SE -> ShaderEffect, SEmt -> ShaderEffect Manager Type
 // SEI -> ShaderEffect Instance: Stores uniforms & references (no code changes)
@@ -18,53 +21,60 @@
 //     But VisibilityMesh renderer'll compile a frag-shader with matching attribute data loading
 //     shader funcs and an shaderID to store in MaterialMask-RT at VisibilityPass.
 
-typedef struct shaderEffect_rt*             rtShaderEffect;
-typedef struct shaderEffectInstance_rt*     rtShaderEffectInstance;
-typedef struct shaderEffectManagerType_rt*  rtShaderEffectManagerType;
-typedef struct shaderEffectInstanceInfo_rt* rtShaderEffectInstanceInfo;
-typedef struct shaderEffectManager_rt {
-  ////////// USER INTERFACE
+////////// USER INTERFACE
 
-  static rtShaderEffect             createSE(rtShaderEffectManagerType Mmt, void* extraInfo);
-  static rtShaderEffectInstance     createSEI(rtShaderEffect effect, void* extraInfo);
-  static unsigned char              destroySEs(unsigned int count, rtShaderEffect* shaderEffects);
-  static unsigned char              destroySEIs(unsigned int            count,
-                                                rtShaderEffectInstance* shaderEffectInstances);
-  static void                       frame();
-  static rtShaderEffectInstanceInfo createSEIInfo_buffer(const char* name, unsigned long long size);
-  static rtShaderEffectInstanceInfo createSEIInfo_texture(const char* name, unsigned char isSampled,
-                                                          textureChannels_tgfx channelInfo);
+struct rtShaderEffect*         SEM_createSE(const struct rtShaderEffectManagerType* Mmt,
+                                                   void*                                   extraInfo);
+struct rtShaderEffectInstance* SEM_createSEI(struct rtShaderEffect* effect, void* extraInfo);
+unsigned char SEM_destroySEs(unsigned int count, struct rtShaderEffect** shaderEffects);
+unsigned char SEM_destroySEIs(unsigned int                    count,
+                                     struct rtShaderEffectInstance** shaderEffectInstances);
+void          SEM_frame();
 
-  static void setSEI_buffer(rtShaderEffectInstance instance, rtShaderEffectInstanceInfo info,
-                            buffer_tgfxhnd buf, unsigned long long offset, unsigned long long size);
-  static void setSEI_texture(rtShaderEffectInstance instance, rtShaderEffectInstanceInfo info,
-                             texture_tgfxhnd texture);
+struct rtShaderEffectInstanceInput* SEM_createSEIInput_buffer(const char*        name,
+                                                                     unsigned long long size);
+struct rtShaderEffectInstanceInput* SEM_createSEIInput_texture(
+  const char* name, unsigned char isSampled, enum textureChannels_tgfx channelInfo);
 
-  ///////////////////////////
+void SEM_setSEI_buffer(struct rtShaderEffectInstance*      instance,
+                              struct rtShaderEffectInstanceInput* info, struct tgfx_buffer_obj* buf,
+                              unsigned long long offset, unsigned long long size);
+void SEM_setSEI_texture(struct rtShaderEffectInstance*      instance,
+                               struct rtShaderEffectInstanceInput* info,
+                               struct tgfx_texture_obj*            texture);
 
-  ///////////// ShaderEffect Manager Type (SEmt) definitions (Only for SEmt implementors)
+struct rtShaderEffect* SEM_getSE(const struct rtShaderEffectInstance* instance);
+void                   SEM_getBindingTableDesc(struct rtShaderEffect*                    shader,
+                                                      const struct rtShaderEffectInstanceInput* instanceInput,
+                                                      struct tgfx_binding_table_description*    desc);
 
-  // Extra info is manager specific data input (like vertex attribute info in visibilityMesh)
-  struct managerDesc {
-    const char* managerName;
-    uint32_t    managerVer;
-    uint32_t    shaderEffectStructSize;
-    rtShaderEffect (*createShaderEffectFnc)(void* extraInfo);
-    unsigned char (*destroyShaderEffectFnc)(rtShaderEffect sfx);
-    // Function should always return info count. Infos can be nullptr to detect count.
-    unsigned int (*getRtShaderEffectInstanceInfoFnc)(rtShaderEffect              sfx,
-                                                     rtShaderEffectInstanceInfo* infos);
-    void (*frameFnc)();
-  };
-  // Only for SEmt implementors
-  static rtShaderEffectManagerType registerManager(managerDesc desc);
-  // Only for SEmt implementors
-  static void* createShaderEffectHandle(rtShaderEffectManagerType managerType);
+///////////////////////////
 
-  ////////////////////////////
+///////////// ShaderEffect Manager Type (SEmt) definitions (Only for SEmt implementors)
 
-  // Resource Manager Type (Rmt) implementation
-  typedef rtShaderEffect       defaultResourceType;
-  static rtResourceManagerType managerType();
-  static void                  initializeManager();
-} rtShaderEffectManager; // rtSEM
+// Extra info is manager specific data input (like vertex attribute info in visibilityMesh)
+struct SEM_managerDesc {
+  const char*  managerName;
+  unsigned int managerVer;
+  unsigned int shaderEffectStructSize;
+  struct rtShaderEffect* (*createShaderEffectFnc)(void* extraInfo);
+  unsigned char (*destroyShaderEffectFnc)(struct rtShaderEffect* sfx);
+  // Function should always return info count. Infos can be nullptr to detect count.
+  unsigned int (*getRtShaderEffectInstanceInfoFnc)(struct rtShaderEffect*               sfx,
+                                                   struct rtShaderEffectInstanceInput** infos);
+  void (*frameFnc)();
+};
+// Only for SEmt implementors
+const struct rtShaderEffectManagerType* SEM_registerManager(SEM_managerDesc desc);
+// Only for SEmt implementors
+void* SEM_createShaderEffectHandle(const struct rtShaderEffectManagerType* managerType);
+
+////////////////////////////
+
+// Resource Manager Type (Rmt) implementation
+const struct rtResourceManagerType* SEM_managerType();
+void                                SEM_initializeManager();
+
+#ifdef __cplusplus
+}
+#endif

@@ -121,7 +121,7 @@ rtMesh meshManager_rt::createDefaultMesh(const fastgltf::Asset& a, const fastglt
   }
 }
 #endif
-rtResource* importFileUsingGLTF(const wchar_t* i_PATH, uint64_t* resourceCount) {
+struct rtResource** importFileUsingGLTF(const wchar_t* i_PATH, uint64_t* resourceCount) {
 #ifdef FASTGLTF_VERSION
   // Parse the file
   fastgltf::Parser         parser;
