@@ -5,23 +5,29 @@
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 #include <assimp/Importer.hpp>
+// STB to load image
+#include <stb_image.h>
 
 #include <logger_tapi.h>
 #include <string_tapi.h>
 #include <tgfx_structs.h>
 #include <tgfx_forwarddeclarations.h>
+#include <tgfx_gpucontentmanager.h>
 #include <ecs_tapi.h>
 
 #include "../editor_includes.h"
 #include "resourceManager.h"
+#include "shaderEffect.h"
 #include "mesh.h"
 #include "../render_context/forwardMesh.h"
+#include "../render_context/rendercontext.h"
 #include "scene.h"
+#include "surfaceMaterial.h"
 
 #ifdef AI_ASSIMP_HPP_INC
-rtMesh* createForwardMesh(aiMesh* aMesh) {
+rtMesh* ASSIMP_createForwardMesh(aiMesh* aMesh) {
   void*   meshData = nullptr;
-  rtMesh* mesh = forwardMM_allocateMesh(aMesh->mNumVertices, aMesh->mNumFaces * 3, &meshData);
+  rtMesh* mesh     = forwardMM_allocateMesh(aMesh->mNumVertices, aMesh->mNumFaces * 3, &meshData);
 
   rtForwardVertex* vertexBuffer = ( rtForwardVertex* )meshData;
   uint32_t*        indexBuffer =
@@ -53,35 +59,81 @@ rtMesh* createForwardMesh(aiMesh* aMesh) {
   MM_uploadMeshes(1, &mesh);
   return mesh;
 }
-#endif
-#ifdef AI_ASSIMP_HPP_INC
-void fillEntity(struct rtScene* scene, entityHnd_ecstapi ntt, aiNode* node,
-                struct rtMesh** const meshes) {
-  compType_ecstapi     compType = {};
-  defaultComponent_rt* comp     = ( defaultComponent_rt* )editorECS->get_component_byEntityHnd(
-    ntt, getDefaultComponentTypeID(), &compType);
+
+teSurfaceMaterialInstance* ASSIMP_createMaterial(const aiMaterial* aMaterial) {
+  teSurfaceMaterialInstance* sei = SMM_createPhongMaterialInstance();
+
+  // Diffuse texture
+  {
+    tgfx_texture*           diffTexture;
+    tgfx_textureDescription diffuseDesc;
+    aiString                diffPath;
+    aiTextureType           diffTextTypes[] = {aiTextureType_BASE_COLOR, aiTextureType_DIFFUSE,
+                                               aiTextureType_DIFFUSE_ROUGHNESS, aiTextureType_EMISSIVE,
+                                               aiTextureType_SPECULAR};
+    for (uint32_t i = 0; i < length_c(diffTextTypes); i++) {
+      aiReturn result = aMaterial->GetTexture(diffTextTypes[i], 0, &diffPath);
+      if (!diffPath.length || result != aiReturn_SUCCESS) {
+        continue;
+      }
+      // Load texture
+      int res[3] = {};
+      unsigned char* data = stbi_load(diffPath.C_Str(), &res[0], &res[1], &res[2], 4);
+      if (!data) {
+        continue;
+      }
+      diffuseDesc.channelType = texture_channels_tgfx_RGBA8UB;
+      diffuseDesc.dataOrder   = textureOrder_tgfx_SWIZZLE;
+      diffuseDesc.dimension   = texture_dimensions_tgfx_2D;
+      diffuseDesc.mipCount    = 1;
+      diffuseDesc.permittedQueueCount = 64;
+      diffuseDesc.permittedQueues     = allQueues;
+      diffuseDesc.resolution          = {uint32_t(res[0]), uint32_t(res[1])};
+      diffuseDesc.usage = textureUsageMask_tgfx_RANDOMACCESS | textureUsageMask_tgfx_RASTERSAMPLE;
+      
+      contentManager->createTexture(gpu, &diffuseDesc, &diffTexture);
+      break;
+    }
+
+    SEM_setSEI_texture(sei, SSEM_getDiffuseInput(), diffTexture);
+  }
+
+  return sei;
+}
+
+void ASSIMP_fillEntity(struct rtScene* scene, tapi_ecs_entity* ntt, const aiScene* assimpScene,
+                       const aiNode* node, struct rtMesh* const* meshes,
+                       struct rtShaderEffectInstance* const* SEIs) {
+  void*                compType = {};
+  rtMeshComponent* comp     = ( rtMeshComponent* )editorECS->get_component_byEntityHnd(
+    ntt, sceneManager->getMeshComponentTypeID(), &compType);
   assert(comp && "Default component isn't found!");
-  comp->m_meshes.resize(node->mNumMeshes);
+
+  comp->m_meshes    = new rtMesh*[node->mNumMeshes];
+  comp->m_SEIs      = new rtShaderEffectInstance*[node->mNumMeshes];
+  comp->m_meshCount = node->mNumMeshes;
   for (uint32_t i = 0; i < node->mNumMeshes; i++) {
     comp->m_meshes[i] = meshes[node->mMeshes[i]];
+    comp->m_SEIs[i]   = SEIs[assimpScene->mMeshes[node->mMeshes[i]]->mMaterialIndex];
   }
   for (uint8_t i = 0; i < 4; i++) {
     for (uint8_t j = 0; j < 4; j++) {
-      comp->m_worldTransform[i][j] = node->mTransformation[i][j];
+      comp->m_worldTransform.v[(i * 4) + j] = node->mTransformation[i][j];
     }
   }
-  comp->m_children.resize(node->mNumChildren);
+
+  comp->m_children = new tapi_ecs_entity*[node->mNumChildren];
   for (uint32_t i = 0; i < node->mNumChildren; i++) {
-    comp->m_children[i] = SM_addDefaultEntity(scene);
-    fillEntity(scene, comp->m_children[i], node->mChildren[i], meshes);
+    comp->m_children[i] = sceneManager->addEntity(scene, sceneManager->getMeshEntityType());
+    ASSIMP_fillEntity(scene, comp->m_children[i], assimpScene, node->mChildren[i], meshes, SEIs);
   }
 }
-void createEntitiesWithAssimp(struct rtScene* scene, aiNode* rootNode,
-                              struct rtMesh** const meshes) {
-  entityHnd_ecstapi rootNtt = SM_addDefaultEntity(scene);
-  fillEntity(scene, rootNtt, rootNode, meshes);
+void ASSIMP_createEntities(struct rtScene* scene, const aiScene* assimpScene,
+                           const aiNode* rootNode, struct rtMesh* const* meshes,
+                           struct rtShaderEffectInstance* const* SEIs) {
+  tapi_ecs_entity* rootNtt = sceneManager->addEntity(scene, sceneManager->getMeshEntityType());
+  ASSIMP_fillEntity(scene, rootNtt, assimpScene, rootNode, meshes, SEIs);
 }
-#endif // ASSIMP
 
 struct rtResource** importFileUsingAssimp(const wchar_t* i_PATH, uint64_t* resourceCount) {
   Assimp::Importer          import;
@@ -106,8 +158,9 @@ struct rtResource** importFileUsingAssimp(const wchar_t* i_PATH, uint64_t* resou
   std::vector<struct rtResource*> resources;
   std::vector<struct rtMesh*>     meshes;
   for (uint32_t i = 0; i < aScene->mNumMeshes; i++) {
-    rtMesh* mesh = createForwardMesh(aScene->mMeshes[i]);
+    rtMesh* mesh = ASSIMP_createForwardMesh(aScene->mMeshes[i]);
     if (!mesh) {
+      logSys->log(log_type_tapi_WARNING, false, L"Failed to import a mesh");
       continue;
     }
     meshes.push_back(mesh);
@@ -131,11 +184,41 @@ struct rtResource** importFileUsingAssimp(const wchar_t* i_PATH, uint64_t* resou
     resources.push_back(RM_createResource(&resourceDesc));
   }
 
-  {
-    struct rtScene* scene = SM_createScene();
-    createEntitiesWithAssimp(scene, aScene->mRootNode, meshes.data());
+  // Only simple surface materials are imported for now
+  std::vector<struct rtShaderEffectInstance*> SEIs;
+  for (uint32_t mIndx = 0; mIndx < aScene->mNumMaterials; mIndx++) {
+    const aiMaterial*       aMat = aScene->mMaterials[mIndx];
+    rtShaderEffectInstance* sei  = ASSIMP_createMaterial(aMat);
+    if (!sei) {
+      logSys->log(log_type_tapi_WARNING, false, L"Failed to import a surface material");
+      continue;
+    }
+    SEIs.push_back(sei);
+
     rtResourceDesc resourceDesc = {};
-    resourceDesc.managerType    = SM_managerType();
+    resourceDesc.managerType    = ();
+    resourceDesc.resourceHnd    = sei;
+    std::string seiName         = SOURCE_DIR "Content/SurfaceMaterials/";
+
+    bool isThereNameCollision = false;
+    // TODO: Check against name collision across materials in the same Assimp Scene.
+
+    if (aScene->mMaterials[mIndx]->GetName().length && !isThereNameCollision) {
+      seiName += aScene->mMaterials[mIndx]->GetName().C_Str();
+    } else {
+      // TODO: Find the first aiNode in the scene that references this mesh
+      //  then use entity's name as mesh name
+    }
+
+    resourceDesc.pathNameExt = seiName.c_str();
+    resources.push_back(RM_createResource(&resourceDesc));
+  }
+
+  {
+    struct rtScene* scene = sceneManager->createScene();
+    ASSIMP_createEntities(scene, aScene, aScene->mRootNode, meshes.data(), SEIs.data());
+    rtResourceDesc resourceDesc = {};
+    resourceDesc.managerType    = sceneManager->getResourceManagerType();
     resourceDesc.resourceHnd    = scene;
     std::string meshName        = SOURCE_DIR "Content/Scenes/";
 
@@ -154,3 +237,9 @@ struct rtResource** importFileUsingAssimp(const wchar_t* i_PATH, uint64_t* resou
   *resourceCount = resources.size();
   return finalList;
 }
+
+#else
+struct rtResource** importFileUsingAssimp(const wchar_t* i_PATH, uint64_t* resourceCount) {
+  return nullptr;
+}
+#endif // AI_ASSIMP_HPP_INC

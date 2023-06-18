@@ -1,16 +1,22 @@
 #pragma once
-#include "../editor_includes.h"
-#include "tgfx_structs.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-typedef struct camera_rt* rtCamera;
 
-typedef struct cameraController_rt {
-  static rtCamera createCamera(bool isPerspective);
-  static void     setActiveCamera(rtCamera cam);
-  static void     setCameraProps(rtCamera cam, const tgfx_vec2* resolution = nullptr,
-                                 const float* nearPlane = nullptr, const float* farPlane = nullptr,
-                                 const float* mouseSensitivity = nullptr, const float* fov = nullptr);
-  static void     getCameraMatrixes(bool isRightHanded, rtMat4* viewMat = nullptr,
-                                    rtMat4* projMat = nullptr);
-  static void     update();
-} rtCameraController;
+struct rtCameraController {
+  static struct tapi_ecs_entity* (*createCamera)(struct rtScene* scene, unsigned char isPerspective);
+  static void (*setCameraProps)(struct tapi_ecs_entity* cam, const struct tgfx_vec2* resolution,
+                                const float* nearPlane, const float* farPlane,
+                                const float* mouseSensitivity, const float* fov, const unsigned char* isActive);
+  // @param FoV = radian, camDir = normalized
+  static void (*getCameraMatrixes)(bool isRightHanded, struct rtMat4* viewMat, struct rtMat4* projMat,
+                                   struct tgfx_vec3* camPos, struct tgfx_vec3* camDir, float* fov);
+  static void (*update)();
+};
+extern const struct rtCameraController* cameraController;
+static void                             initializeCameraController();
+
+#ifdef __cplusplus
+}
+#endif

@@ -8,86 +8,68 @@
 #include "ecs_tapi.h"
 #include "resourceManager.h"
 #include "mesh.h"
+#include "shaderEffect.h"
 #include "../render_context/rendercontext.h"
+#include "../render_context/sceneRenderer.h"
 #include "scene.h"
 
-static unsigned char                deserializeScene(const rtResourceDesc* desc) { return false; }
-static unsigned char                isSceneValid(void* dataHnd) { return false; }
 static const rtResourceManagerType* defmanagerType;
-static entityTypeHnd_ecstapi        defaultEntityType;
-static compTypeID_ecstapi           defaultCompTypeID;
-
-const struct rtResourceManagerType* SM_managerType() { return defmanagerType; }
-
-componentHnd_ecstapi createDefaultComp() { return (componentHnd_ecstapi) new defaultComponent_rt; }
-void destroyDefaultComp(componentHnd_ecstapi comp) { delete ( defaultComponent_rt* )comp; }
-void SM_initializeManager() {
-  RM_managerDesc desc;
-  desc.managerName                    = "Default Scene Resource Manager";
-  desc.managerVer                     = MAKE_PLUGIN_VERSION_TAPI(0, 0, 0);
-  desc.deserialize                    = deserializeScene;
-  desc.validate                       = isSceneValid;
-  defmanagerType                      = RM_registerManager(desc);
-
-  componentManager_ecs compManager;
-  compManager.createComponent  = createDefaultComp;
-  compManager.destroyComponent = destroyDefaultComp;
-  defaultCompTypeID =
-    editorECS->addComponentType("Simple Component", nullptr, compManager, nullptr, 0);
-  defaultEntityType =
-    editorECS->addEntityType(&defaultCompTypeID, 1);
-}
+static struct tapi_ecs_entityType*  meshEntityType;
+static tapi_ecs_componentTypeID*    meshCompTypeID;
 
 struct rtScene {
-  std::vector<entityHnd_ecstapi>     entities;
-  bindingTable_tgfxhnd               table;
-  std::vector<commandBundle_tgfxhnd> rasterBndles;
-  std::vector<commandBundle_tgfxhnd> computeBndles;
+  std::vector<struct tapi_ecs_entity*>    entities;
+};
+struct rtSceneManagerPrivate {
+  static unsigned char deserializeScene(const rtResourceDesc* desc) { return false; }
+  static unsigned char isSceneValid(void* dataHnd) { return false; }
+
+  static const struct rtResourceManagerType* managerType() { return defmanagerType; }
+  static tapi_ecs_component*                 createMeshComponent() {
+    return ( tapi_ecs_component* )new rtMeshComponent;
+  }
+  static void destroyMeshComponent(tapi_ecs_component* comp) { delete ( rtMeshComponent* )comp; }
+  static rtScene*                createScene() { return new rtScene; }
+  static unsigned char           destroyScene(struct rtScene* scene) { return false; }
+  static struct tapi_ecs_entity* addEntity(struct rtScene*             scene,
+                                           struct tapi_ecs_entityType* type) {
+    tapi_ecs_entity* ntt = editorECS->createEntity(type);
+    scene->entities.push_back(ntt);
+    return ntt;
+  }
+  static struct tapi_ecs_componentTypeID* getMeshComponentTypeID() { return meshCompTypeID; }
+  static struct tapi_ecs_entityType* getMeshEntityType() { return meshEntityType; }
 };
 
-rtScene* SM_createScene() { return new rtScene; }
-bool    SM_destroyScene() { return false; }
-
-compType_ecstapi  compType = {};
-entityHnd_ecstapi SM_addDefaultEntity(struct rtScene* scene) {
-  entityHnd_ecstapi ntt = editorECS->createEntity(defaultEntityType);
-  scene->entities.push_back(ntt);
-  return ntt;
-}
-
-compTypeID_ecstapi getDefaultComponentTypeID() {
-  return defaultCompTypeID;
-}
-void               SM_renderScene(struct rtScene* scene) {
-  scene->rasterBndles.clear();
-  scene->computeBndles.clear();
-
-  // Static mesh rendering
+void initializeSceneManager() {
+  // Set system struct
   {
-    // Each mesh renderer has its own pipeline, binding table, vertex/index buffer(s) & draw type
-    // (direct/indirect). So each mesh renderer should provide a command bundle.
-    std::vector<MM_renderInfo> infos;
-    for (entityHnd_ecstapi ntt : scene->entities) {
-      compType_ecstapi  compType = {};
-      defaultComponent_rt* comp     = ( defaultComponent_rt* )editorECS->get_component_byEntityHnd(
-        ntt, defaultCompTypeID, &compType);
-      assert(comp && "Default component isn't found!");
-      for (rtMesh* mesh : comp->m_meshes) {
-        MM_renderInfo info;
-        info.mesh      = mesh;
-        info.transform = ( rtMat4* )&comp->m_worldTransform;
-        infos.push_back(info);
-      }
-    }
-    uint32_t               bndleCount   = 0;
-    commandBundle_tgfxhnd* rasterBndles = MM_renderMeshes(infos.size(), infos.data(), &bndleCount);
-    scene->rasterBndles.insert(scene->rasterBndles.end(), rasterBndles, rasterBndles + bndleCount);
+    rtSceneManager* sManager           = new rtSceneManager;
+    sManager->addEntity          = rtSceneManagerPrivate::addEntity;
+    sManager->createScene              = rtSceneManagerPrivate::createScene;
+    sManager->destroyScene             = rtSceneManagerPrivate::destroyScene;
+    sManager->getMeshComponentTypeID   = rtSceneManagerPrivate::getMeshComponentTypeID;
+    sManager->getMeshEntityType        = rtSceneManagerPrivate::getMeshEntityType;
+    sManager->getResourceManagerType   = rtSceneManagerPrivate::managerType;
+    sceneManager                       = sManager;
   }
 
-  for (commandBundle_tgfxhnd bundle : scene->rasterBndles) {
-    rtRenderer::rasterize(bundle);
+  RM_managerDesc desc;
+  desc.managerName = "Scene Resource Manager";
+  desc.managerVer  = MAKE_PLUGIN_VERSION_TAPI(0, 0, 0);
+  desc.deserialize = rtSceneManagerPrivate::deserializeScene;
+  desc.validate    = rtSceneManagerPrivate::isSceneValid;
+  defmanagerType   = RM_registerManager(desc);
+
+  // Register RT Mesh Component
+  {
+    struct ecs_compManager compManager;
+    compManager.createComponent  = rtSceneManagerPrivate::createMeshComponent;
+    compManager.destroyComponent = rtSceneManagerPrivate::destroyMeshComponent;
+    meshCompTypeID =
+      editorECS->addComponentType("RT Mesh Component", nullptr, compManager, nullptr, 0);
+    meshEntityType = editorECS->addEntityType(&meshCompTypeID, 1);
   }
-  for (commandBundle_tgfxhnd computeBundle : scene->computeBndles) {
-    rtRenderer::compute(computeBundle);
-  }
+
+  initializeSceneRenderer();
 }

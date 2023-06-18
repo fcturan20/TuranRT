@@ -13,9 +13,9 @@ extern "C" {
 
 // Default vertex buffer layout
 typedef struct forwardVertex_rt {
-  vec3_tgfx pos;
-  vec2_tgfx textCoord;
-  vec3_tgfx normal;
+  tgfx_vec3 pos;
+  tgfx_vec2 textCoord;
+  tgfx_vec3 normal;
 } rtForwardVertex;
 
 // Create, upload, render & destroy vertex_rt vertex buffers.

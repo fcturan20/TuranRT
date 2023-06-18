@@ -14,6 +14,7 @@
 
 // TuranLibraries headers
 #include "unittestsys_tapi.h"
+#include <virtualmemorysys_tapi.h>
 #include "TuranLibraries/editor/main.h"
 #include "TuranLibraries/editor/pecfManager/pecfManager.h"
 #include "allocator_tapi.h"
@@ -35,24 +36,29 @@
 #include "render_context/rendercontext.h"
 #include "resourceSys/mesh.h"
 #include "resourceSys/scene.h"
+#include "render_context/sceneRenderer.h"
 #include "systems/input.h"
 #include "systems/camera.h"
 
-unittestsys_tapi*   unitTestSys  = {};
-allocator_sys_tapi* allocatorSys = {};
-tgfx_core*          tgfx         = {};
-filesys_tapi*       fileSys      = {};
-tapi_profiler       profilerSys  = {};
-tapi_stringSys*     stringSys    = nullptr;
+const tapi_unitTestSys*      unitTestSys  = {};
+const tapi_allocatorSys*     allocatorSys = {};
+const tapi_bitsetSys*        bitsetSys    = {};
+const tgfx_core*             tgfx         = {};
+const tapi_fileSys*          fileSys      = {};
+const tapi_profiler*         profilerSys  = {};
+const tapi_stringSys*        stringSys    = {};
+const tapi_virtualMemorySys* virmemSys    = {};
 
 static constexpr const char* pluginNames[]{
-  UNITTEST_TAPI_PLUGIN_NAME, THREADINGSYS_TAPI_PLUGIN_NAME, STRINGSYS_TAPI_PLUGIN_NAME,
-  PROFILER_TAPI_PLUGIN_NAME, FILESYS_TAPI_PLUGIN_NAME,      LOGGER_TAPI_PLUGIN_NAME,
-  BITSET_TAPI_PLUGIN_NAME,   ALLOCATOR_TAPI_PLUGIN_NAME,    TGFX_PLUGIN_NAME};
+  UNITTEST_TAPI_PLUGIN_NAME,  THREADINGSYS_TAPI_PLUGIN_NAME,
+  STRINGSYS_TAPI_PLUGIN_NAME, VIRTUALMEMORY_TAPI_PLUGIN_NAME,
+  PROFILER_TAPI_PLUGIN_NAME,  FILESYS_TAPI_PLUGIN_NAME,
+  LOGGER_TAPI_PLUGIN_NAME,    BITSET_TAPI_PLUGIN_NAME,
+  ALLOCATOR_TAPI_PLUGIN_NAME, TGFX_PLUGIN_NAME};
 
-void load_plugins() {
+void loadPlugins() {
   for (uint32_t i = 0; i < sizeof(pluginNames) / sizeof(pluginNames[0]); i++) {
-    pluginHnd_ecstapi pluginHnd = editorECS->loadPlugin(pluginNames[i]);
+    tapi_ecs_plugin* pluginHnd = editorECS->loadPlugin(pluginNames[i]);
     if (!pluginHnd) {
       printf("Failed to load plugin %s\n", pluginNames[i]);
     }
@@ -62,21 +68,24 @@ void load_plugins() {
   }
 #define getSystemPtrRT(name) (( name##_PLUGIN_LOAD_TYPE )editorECS->getSystem(name##_PLUGIN_NAME))
 
+  virmemSys   = getSystemPtrRT(VIRTUALMEMORY_TAPI)->funcs;
   stringSys   = getSystemPtrRT(STRINGSYS_TAPI)->standardString;
   profilerSys = getSystemPtrRT(PROFILER_TAPI)->funcs;
   logSys      = getSystemPtrRT(LOGGER_TAPI)->funcs;
   logSys->init(string_type_tapi_UTF8, "mainLog.txt");
   allocatorSys = getSystemPtrRT(ALLOCATOR_TAPI);
+  bitsetSys    = getSystemPtrRT(BITSET_TAPI)->funcs;
   fileSys      = getSystemPtrRT(FILESYS_TAPI)->funcs;
   tgfx         = getSystemPtrRT(TGFX)->api;
 }
 
-void load_systems() {
-  load_plugins();
+extern void initializeRenderer(tgfx_windowKeyCallback key_cb);
+void        load_systems() {
+  loadPlugins();
 
-  MM_initializeManager();
-  SM_initializeManager();
-  rtRenderer::initialize(rtInputSystem::getCallback());
+  initializeMeshManager();
+  initializeRenderer(rtInputSystem::getCallback());
+  initializeSceneManager();
 
   uint64_t            resourceCount  = {};
   struct rtResource** firstResources = RM_importFile( // SOURCE_DIR "Content/cube.glb"
@@ -86,16 +95,23 @@ void load_systems() {
     &resourceCount);
   struct rtScene*     firstScene     = {};
   for (uint32_t resourceIndx = 0; resourceIndx < resourceCount; resourceIndx++) {
-    const rtResourceManagerType* type   = {};
+    const rtResourceManagerType* type = {};
     void*                        resHnd = RM_getResourceHnd(firstResources[resourceIndx], &type);
-    if (type == SM_managerType()) {
+    if (type == sceneManager->getResourceManagerType()) {
       firstScene = ( struct rtScene* )resHnd;
+      sceneRenderer->createRenderingInstance(firstScene);
     }
   }
 
-  rtCamera cam = rtCameraController::createCamera(true);
+  teCameraComponent cam = rtCameraController::createCamera(true);
+  sceneManager->addCameraEntity(firstScene);
   rtCameraController::setActiveCamera(cam);
-  tgfx_vec2 res = {rtRenderer::getResolution().x, rtRenderer::getResolution().y};
+  tgfx_vec2 res;
+  {
+    tgfx_uvec2 r = renderer->getSwapchainInfo()->resolution;
+    res.x        = r.x;
+    res.y        = r.y;
+  }
   rtCameraController::setCameraProps(cam, &res);
 
   unsigned int i        = 0;
@@ -105,24 +121,21 @@ void load_systems() {
     profilerSys->start_profiling(&frameScope, "Frame Duration", &duration, 1);
     rtInputSystem::update();
     rtCameraController::update();
-    rtRenderer::getSwapchainTexture();
 
     MM_frame();
-    SM_renderScene(firstScene);
-    rtRenderer::renderFrame();
+    renderer->renderFrame();
     profilerSys->finish_profiling(&frameScope);
     logSys->log(log_type_tapi_STATUS, false, L"Frame #%u & Duration %lu microseconds", i, duration);
   }
 
-  rtRenderer::close();
+  renderer->close();
 }
 
 #include "ecs_tapi.h"
 
-ecs_tapi*   editorECS = nullptr;
-tapi_logger logSys    = nullptr;
-extern void initialize_pecfManager();
-extern void load_systems();
+const tapi_ecs*    editorECS = nullptr;
+const tapi_logger* logSys    = nullptr;
+extern void        initialize_pecfManager();
 
 int main() {
   auto ecs_tapi_dll = DLIB_LOAD_TAPI("tapi_ecs.dll");

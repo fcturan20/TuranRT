@@ -2,24 +2,33 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-// Include ecs_tapi & resourceManager.h before this
+// Include editor_includes.h, ecs_tapi & resourceManager.h before this
 
-struct defaultComponent_rt {
-  std::vector<struct rtMesh*> m_meshes;
-  glm::mat4           m_worldTransform;
+struct rtMeshComponent {
+  struct rtMesh**                 m_meshes;
+  struct rtShaderEffectInstance** m_SEIs;
+  unsigned int                    m_meshCount;
+  struct rtMat4                       m_worldTransform;
 
-  std::vector<entityHnd_ecstapi> m_children;
+  struct tapi_ecs_entity** m_children;
+  unsigned int      m_childrenCount;
 };
 
-compTypeID_ecstapi getDefaultComponentTypeID();
-entityHnd_ecstapi SM_addDefaultEntity(struct rtScene* scene);
-void              SM_renderScene(struct rtScene* scene);
+struct rtScene;
+// rtSceneManager uses single-component entities
+struct rtSceneManager {
+  struct rtScene* (*createScene)();
+  unsigned char (*destroyScene)(struct rtScene* scene);
 
-struct rtScene* SM_createScene();
-bool            SM_destroyScene();
+  struct tapi_ecs_entity* (*addEntity)(struct rtScene* scene, struct tapi_ecs_entityType* type);
 
-void                                SM_initializeManager();
-const struct rtResourceManagerType* SM_managerType();
+  struct tapi_ecs_componentTypeID* (*getMeshComponentTypeID)();
+  struct tapi_ecs_entityType* (*getMeshEntityType)();
+  const struct rtResourceManagerType* (*getResourceManagerType)();
+};
+extern const struct rtSceneManager* sceneManager;
+void initializeSceneManager();
+
 
 #ifdef __cplusplus
 }

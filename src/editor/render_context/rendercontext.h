@@ -2,61 +2,89 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include <tgfx_structs.h>
 static constexpr unsigned int swapchainTextureCount = 2;
-// Include tgfx_forwardDeclarations.h, tgfx_structs.h, shaderEffect.h & glm/glm.hpp before including
-// this
+// Include tgfx_forwardDeclarations.h, tgfx_structs.h & glm.hpp before including
 
-typedef struct mat4_rt                          rtMat4;
-typedef struct tgfx_raster_pipeline_description rasterPipelineDescription_tgfx;
-typedef enum rtMemoryRegionType {
-  rtMemoryRegion_UNDEF,
-  rtMemoryRegion_UPLOAD,
-  rtMemoryRegion_LOCAL,
-  rtMemoryRegion_READBACK
-} rtMemoryRegionType;
-struct rtRenderer {
-  static struct rtGpuMemBlock* allocateMemoryBlock(bufferUsageMask_tgfxflag flag, uint64_t size,
-                                            enum rtMemoryRegionType memType);
-  static void           deallocateMemoryBlock(struct rtGpuMemBlock* memBlock);
-  static void           setActiveFrameCamProps(const rtMat4* view, const rtMat4* proj,
-                                               const tgfx_vec3* camPos, const tgfx_vec3* camDir,
-                                               float fovDegrees);
+extern struct tgfx_gpuQueue* allQueues[64];
 
-  // Renderer execute uploadBundle at the beginning of the frame.
-  // No caching, so user should call it every frame.
-  // User should manage command bundle lifetime (record, destroy)
-  static void upload(commandBundle_tgfxhnd uploadBundle);
-  // Similar to upload but executed after all upload calls finished
-  static void rasterize(commandBundle_tgfxhnd renderBundle);
-  // Similar to rasterize but executed after all rasterize calls finished
-  static void compute(commandBundle_tgfxhnd commandBundle);
-
-  static void initialize(tgfx_windowKeyCallback keyCB);
-  static void getSwapchainTexture();
-  static void renderFrame();
-  static void close();
-
-  // Block should be allocated with either UPLOAD or READBACK
-  static void*                getBufferMappedMemPtr(struct rtGpuMemBlock* block);
-  static buffer_tgfxhnd       getBufferTgfxHnd(struct rtGpuMemBlock* block);
-  static void                 getRTFormats(rasterPipelineDescription_tgfx* rasterPipeDesc);
-  static unsigned int         getFrameIndx();
-  static bindingTable_tgfxhnd getActiveCamBindingTable();
-  static bindingTable_tgfxhnd getSwapchainStorageBindingTable();
-  static const bindingTableDescription_tgfx* getCamBindingDesc();
-  static const bindingTableDescription_tgfx* getSwapchainStorageBindingDesc();
-  static tgfx_uvec2                          getResolution();
-  static const struct tgfx_gpu_description*  getGpuDesc();
-  static struct rtShaderEffect*              getDefaultSurfaceShaderFX();
+struct rtRendererDescription {
+  void* data;
+  void (*renderFrame)(void* data);
+  void (*close)(void* data);
 };
-extern gpuQueue_tgfxhnd allQueues[64];
+struct rtGpuCopyInfo {
+  struct tgfx_heap* heap;
+  unsigned int      size, heapOffset;
+  // If region is UPLOAD or READBACK, use this for CPU access
+  void* mappedLocation;
+};
+struct rtGpuMemoryRegion;
+struct rtRenderer {
+  //////////////// GENERIC SYSTEM FUNCTIONALITY:
 
-struct gpuStorageBuffer_rt;
-typedef struct gpuStorageBuffer_rt* rtGpuStorageBuffer;
-typedef struct storagerenderer_rt {
-} rtStorageRenderer;
+  // Use this for independent renderers
+  // For example: 3D WorldRenderer (all post-fx etc), lightmap renderer etc.
+  struct teRendererInstance* (*registerRendererInstance)(const struct rtRendererDescription* desc);
+  void (*renderFrame)();
+  void (*close)();
 
-extern window_tgfxhnd mainWindowRT;
+  //////////////// SHADER/PIPELINE COMPILATION:
+
+  /* Until TESL & RenderPass is implemented, GLSL is used
+   * Push constants are 128 bytes for all pipelines
+   * Backend should add a shader that implements push constant struct
+   * Vertex attributes should be loaded by the user with binding tables
+   */
+  struct teShader* (*compileShader)(const char* code);
+  struct tgfx_pipeline* (*createRasterPipeline)(unsigned int            vertexShaderCount,
+                                                struct teShader* const* vertexShaders,
+                                                unsigned int            fragmentShaderCount,
+                                                struct teShader* const* fragmentShaders,
+                                                textureChannels_tgfx    colorFormats[8],
+                                                textureChannels_tgfx    depthFormat);
+  struct tgfx_pipeline* (*createComputePipeline)(unsigned int            shaderCount,
+                                                 struct teShader* const* computeShaders);
+
+  //////////////// SHADER/PIPELINE INPUT BINDING MANAGEMENT
+
+  // @return Allocated binding ID
+  unsigned int (*allocateBinding)(enum shaderdescriptortype_tgfx bindingType);
+  void (*bindGlobalBindingTables)(struct tgfx_commandBundle* bundle);
+  void (*bindTexture)(unsigned int bindingID, unsigned char isSampled,
+                      struct tgfx_texture* texture);
+  void (*bindSampler)(unsigned int bindingID, struct tgfx_sampler* sampler);
+  void (*bindBuffer)(unsigned int bindingID, struct tgfx_buffer* buffer, unsigned int offset,
+                     unsigned int size);
+
+  //////////////// MEMORY ALLOCATION
+
+  // If size is UINT64_MAX, region'll use dynamic allocation
+  // It's better to specify the size, because static allocations're faster
+  // NOTE: Some devices may have special regions only for special resources.
+  //   To handle such cases, you better pass some of your resource example requirements
+  //   This is why memory regions are user-created
+  // For example; If GPU stores sampled textures in a special region,
+  //   heap allocated from gpuTextureManager'll be different than mesh heap etc.
+  struct rtGpuMemoryRegion* (*createRegion)(enum memoryallocationtype_tgfx regionType,
+                                            unsigned long long size, unsigned int reqsCount,
+                                            const struct tgfx_heapRequirementsInfo* reqs);
+  void (*destroyRegion)(struct rtGpuMemoryRegion* region);
+  struct rtGpuCopyInfo (*allocateSize)(struct rtGpuMemoryRegion*               region,
+                                       const struct tgfx_heapRequirementsInfo* req);
+  // User should return the same struct returned from allocateSize
+  void (*deallocateSize)(struct rtGpuMemoryRegion* region, const struct rtGpuCopyInfo* info);
+
+  ///////////////// GETTER-SETTERs
+
+  // Use this to resize your render targets, buffers etc.
+  const struct tgfx_textureDescription* (*getSwapchainInfo)();
+  unsigned int (*getFrameIndx)();
+};
+extern const struct rtRenderer* renderer;
+void                     initializeRenderer(tgfx_windowKeyCallback keyCB);
+
+extern struct tgfx_window* mainWindowRT;
 #ifdef __cplusplus
 }
 #endif

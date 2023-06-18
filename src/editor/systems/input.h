@@ -1,7 +1,9 @@
 #pragma once
-#include "../editor_includes.h"
-#include "tgfx_forwarddeclarations.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
 
+  //Include tgfx_structs.h before this
 /*
 * Input system is to force you carefully design when you need to get input from the user
 * You can't allocate a key combination if any of the subset of the keys is already allocated
@@ -13,15 +15,21 @@ will randomly be not-working.
 * All allocations are freed each update(). So you may call this a per-frame allocation system
 */
 
-typedef struct inputAllocation_rt* rtInputAllocationHnd;
-typedef void (*inputAllocationEvent_rt)(rtInputAllocationHnd allocHnd, key_action_tgfx state,
-                                     void* userPtr);
-typedef struct inputSystem_rt {
+struct rtInputAllocation;
+typedef void (*inputAllocationEvent_rt)(struct rtInputAllocation* allocHnd, keyAction_tgfx state,
+                                        void* userPtr);
+struct rtInputSystem {
   // Returns nullptr if fails
   // Returns a hnd to allow inheritance
-  static rtInputAllocationHnd allocate(unsigned int keyCount, const key_tgfx* keyList,
-                                       inputAllocationEvent_rt event, void* userPtr,
-                                       rtInputAllocationHnd parentAlloc);
-  static void                 update();
-  static tgfx_windowKeyCallback getCallback();
-} rtInputSystem;
+  static struct rtInputAllocation* (*allocate)(unsigned int keyCount, const key_tgfx* keyList,
+                                               inputAllocationEvent_rt event, void* userPtr,
+                                               struct rtInputAllocation* parentAlloc);
+  static void (*update)();
+  static tgfx_windowKeyCallback (*getCallback)();
+};
+void                               initializeInputSystem();
+extern const struct rtInputSystem* inputSys;
+
+#ifdef __cplusplus
+}
+#endif

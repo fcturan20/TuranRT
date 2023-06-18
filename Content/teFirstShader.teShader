@@ -1,0 +1,141 @@
+In teShader language, if you wanna sample a texture; vec4 teSample(uint textureIndx, uint samplerIndx, vec2 coord, vec2 gradient);
+On compute shader, gradient is needed to be computed. On fragment shader, gradient can be accessed with vec2 teDerivatives().
+
+
+// CUSTOM_LIT.teShader
+// Custom surface material shader
+#version 0,0,1
+declare func vec2 get_UVCOORD0();
+declare func vec3 shade_lit(vec3 diffuseColor);
+implement func vec4 shade(){
+    vec3 diffuse = sample(DIFFUSETEXTUREINDX, materialSamplerIndx, get_UVCOORD0()).xyz + vec3(0.3, 0.0, 0.0);
+    return vec4(shade_lit(diffuse), 0.0f);
+}
+
+//////////////////////////// RENDERER/TURAN_EDITOR IMPLEMENTED FUNCTIONS
+
+// GLOBALS.teShader
+// Some structs should be in every shader such as camera & viewportInfo
+// Accessing way may differ each shader/renderpass
+#version 0,0,1
+implement struct cameraInfo{
+    vec3 worldPos;
+    vec3 target;
+    mat4 worldToCamera;
+    mat4 cameraToWorld;
+}
+implement struct viewportInfo{
+    vec2 resolution;
+    cameraInfo camera;
+    uint colorOutputTextureID;
+} as globals.viewportInfo[]; // There may be different views (world view, sun view etc.)
+
+
+// LIGHT_TYPES.teShader
+// Light list independent phong lighting function
+#version 0,0,1
+implement struct phongPointLight{
+    float radius, power;
+    vec3 color, WS;
+} as lighting.phong.point[]; // This name should be unique and other shaders should use this name to include the struct
+declare func vec3 get_POINTLIGHT_SHADOWINGTERM(lighting.phong.point light); // Shadowing term is different for each light and renderer (Ambient occlusion, etc)
+declare func lighting.phong.point getPointLight(uint i);
+declare constant uint MAX_PHONG_POINT_LIGHT_COUNT as lighting.point.MAX_POINTLIGHT_COUNT;
+implement func vec3 shade_pointLight(vec3 diffuseColor, vec3 fragmentNormal, lighting.phong.point light){
+    float NcosL = dot(light.WS, fragmentNormal);
+    return diffuseColor * light.color * power * NcosL * (1.0 / light.radius / light.radius) * get_POINTLIGHT_SHADOWINGTERM(light);
+}
+implement func vec3 shade_lit(vec3 diffuseColor){
+    vec3 fragmentNormal = get_FRAGMENTNORMAL();
+    vec3 result = vec3(0.0);
+    for(uint i = 0; i < lighting.point.MAX_POINTLIGHT_COUNT; i++){
+        lighting.phong.point light = getPointLight(i);
+        if(light.pos == vec3(FLT_MAX)){
+            break;
+        }
+        result += shade_pointLight(diffuseColor, fragmentNormal, light);
+    }
+    return result;
+}
+
+// VISIBILITY_SHADING_STAGE_INPUT.teShader
+// There may be different surfaces with different vertex attribute loadings.
+// But all of them need generic information such as barycentric coordinates, viewportInfo & objectID-primitiveID-materialID
+#version 0,0,1
+
+implement struct visibilityPassInfo{
+    uint viewportIndx;
+    uint shadingPassColorOutputTextureID;
+} as renderPass.visibilityPass.passInstanceInfo[];
+
+include struct globals.viewportInfo[];
+declare func vec2 get_fragCoord();
+implement func vec3 get_BARYCENTRICCOORD(){
+    return calculateBarCoord(
+        image_load(VIS_DDX_TEXTURE_ID, get_fragCoord()), 
+        image_load(VIS_IDENTIFIER_TEXTURE_ID, get_fragCoord()).xy
+    );  
+}
+implement func globals.viewportInfo get_viewport(){
+    return globals.viewportInfo[renderPass.visibilityPass.passInstanceInfo[te_passInstanceIndx].viewportIndx];
+}
+
+// TILED_PHONG_LIGHTING.teShader
+// Tiled lighting means light list is in an fragment coordinate based exclusive buffer
+#version 0,0,1
+include struct lighting.point[];
+include struct globals.viewportInfo[];
+include constant lighting.MAX_POINTLIGHT_COUNT;
+declare constant uint LIGHTING_PHONG_TILE_LENGTH as lighting.TILE_LENGTH;
+declare func globals.viewportInfo get_viewport();
+implement func lighting.phong.point getPointLight(uint i){
+    globals.viewportInfo viewport = get_viewport();
+    uint tileIndx = (get_fragCoord().y / lighting.phong.TILE_LENGTH * viewport.resolution.x) + (get_fragCoord().x / lighting.phong.TILE_LENGTH);
+    return lighting.phong.point[tileIndx + i];
+}
+implement func vec3 shade_pointLight(vec3 diffuseColor, vec3 fragmentNormal, lighting.point light){
+    float NcosL = dot(light.WS, fragmentNormal);
+    return diffuseColor * light.color * power * NcosL * (1.0 / light.radius / light.radius) * get_POINTLIGHT_SHADOWINGTERM(light);
+}
+
+// VISIBILITY_GENERIC_SURFACE_RENDERING_INPUT.teShader
+// This is to render generic meshes
+#version 0,0,1
+declare func vec3 get_SS_DERIVATIVES();
+declare func vec3 get_VERTEXNORMAL(int vertexIndx);
+implement func vec3 get_FRAGMENTNORMAL(){
+    vec3 n0 = get_SS_DERIVATIVES();
+}
+implement func vec2 get_UVCOORD0(){
+
+}
+
+
+// VISIBILITY_FRAGMENT_OUTPUT.teShader
+#version 0,0,1
+#fragment // If this shader is included, output shader will be fragment. Compile your shaders with this, if your visibility rendering pipeline is like Nanite; each material is a unique full-quad fragment shader in the shading-stage
+declare func vec4 shade();
+declare output vec4 color RT:0;
+implement func vec2 get_fragCoord(){
+    return fs_FragCoord.xy;
+}
+implement func void main(){
+    color = shade();
+}
+
+// VISIBILITY_COMPUTE_OUTPUT.teShader
+#version 0,0,1
+#compute // If this shader is included, output shader will be compute. Compile your shaders with this, if your visibility rendering pipeline is like custom engines; each material is a unique compute shader in the shading-stage
+declare func vec4 shade();
+include struct globals.viewportInfo[];
+declare func globals.viewportInfo get_viewport();
+implement func vec2 get_fragCoord(){
+    return vec2(cs_globalInvocationID.x * cs_globalInvocationSize.x, cs_globalInvocationID.y * cs_globalInvocationSize.y);
+}
+implement func void main(){
+    image_store(renderPass.visibilityPass.passInstanceInfo[te_passInstanceIndx].shadingPassColorOutputTextureID, get_fragCoord(), shade());
+}
+
+
+// tePipelineCompiler
+INPUT CODE: All .teShaders except VISIBILITY_COMPUTE_OUTPUT.teShader

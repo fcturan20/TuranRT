@@ -2,7 +2,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
+/*
 // Acronyms: SE -> ShaderEffect, SEmt -> ShaderEffect Manager Type
 // SEI -> ShaderEffect Instance: Stores uniforms & references (no code changes)
 // SEIs will be created by rtSEM.
@@ -35,18 +35,20 @@ struct rtShaderEffectInstanceInput* SEM_createSEIInput_buffer(const char*       
                                                                      unsigned long long size);
 struct rtShaderEffectInstanceInput* SEM_createSEIInput_texture(
   const char* name, unsigned char isSampled, enum textureChannels_tgfx channelInfo);
+struct rtShaderEffectInstanceInput* SEM_createSEIInput_sampler(
+  const char* name, const struct tgfx_samplerDescription* desc);
 
 void SEM_setSEI_buffer(struct rtShaderEffectInstance*      instance,
-                              struct rtShaderEffectInstanceInput* info, struct tgfx_buffer_obj* buf,
+                              struct rtShaderEffectInstanceInput* info, struct tgfx_buffer* buf,
                               unsigned long long offset, unsigned long long size);
 void SEM_setSEI_texture(struct rtShaderEffectInstance*      instance,
                                struct rtShaderEffectInstanceInput* info,
-                               struct tgfx_texture_obj*            texture);
+                               struct tgfx_texture*            texture);
 
 struct rtShaderEffect* SEM_getSE(const struct rtShaderEffectInstance* instance);
 void                   SEM_getBindingTableDesc(struct rtShaderEffect*                    shader,
                                                       const struct rtShaderEffectInstanceInput* instanceInput,
-                                                      struct tgfx_binding_table_description*    desc);
+                                                      struct tgfx_bindingTableDescription*    desc);
 
 ///////////////////////////
 
@@ -74,7 +76,7 @@ void* SEM_createShaderEffectHandle(const struct rtShaderEffectManagerType* manag
 // Resource Manager Type (Rmt) implementation
 const struct rtResourceManagerType* SEM_managerType();
 void                                SEM_initializeManager();
-
+*/
 #ifdef __cplusplus
 }
 #endif

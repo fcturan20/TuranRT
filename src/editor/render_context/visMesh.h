@@ -26,7 +26,7 @@ unsigned char visMM_uploadMesh(struct rtMesh* mesh);
 unsigned char visMM_destroyMesh(struct rtMesh* mesh);
 
 // Compute is to render meshes with ray tracing
-commandBundle_tgfxhnd visMM_renderMesh(unsigned int count, const struct MM_renderInfo* const infos);
+struct tgfx_commandBundle* visMM_renderMesh(unsigned int count, const struct MM_renderInfo* const infos);
 void                  visMM_frame();
 unsigned char         visMM_supportsMaterial(struct rtMaterial* mat);
 

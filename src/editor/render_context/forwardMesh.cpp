@@ -14,12 +14,11 @@
 #include "../editor_includes.h"
 #include "../resourceSys/mesh.h"
 #include "../resourceSys/shaderEffect.h"
-#include "../resourceSys/surfaceSE.h"
+#include "../resourceSys/surfaceMaterial.h"
 #include "forwardMesh.h"
-#include "../render_context/rendererAllocator.h"
 #include "../render_context/rendercontext.h"
 
-char_c                         attribNames[]            = {"POSITION", "TEXCOORD0", "NORMAL"};
+char_sc                         attribNames[]            = {"POSITION", "TEXCOORD0", "NORMAL"};
 uint32_sc                      attribCount              = length_c(attribNames);
 uint32_sc                      attribElementSize[]      = {3 * 4, 2 * 4, 3 * 4};
 static constexpr datatype_tgfx attribElementTypesTgfx[] = {
@@ -34,17 +33,17 @@ static constexpr uint32_t RT_MAXDEFAULTMESH_MESHCOUNT = 1024, RT_MAXTRANSFORMBUF
 
 rtGpuMemBlock *gpuVertexBuffer = {}, *gpuIndexBuffer = {}, *gpuDrawIndirectBuffer = {},
               *gpuComputeIndirectBuffer = {}, *transformsBuffer[swapchainTextureCount] = {};
-std::vector<commandBundle_tgfxhnd> uploadBundleList   = {};
-pipeline_tgfxhnd                   meshRasterPipeline = {}, meshComputePipeline = {};
-bindingTableDescription_tgfx       transformBindingDesc = {}, indirectDrawBindingTableDesc;
-bindingTable_tgfxhnd               transformBindingTables[swapchainTextureCount] = {},
-                     indirectDrawBindingTable                                    = {},
-                     vertexBufferBindingTables[swapchainTextureCount]            = {},
-                     indexBufferBindingTables[swapchainTextureCount]             = {};
-indirectOperationType_tgfx rasterOperationList[RT_MAXDEFAULTMESH_MESHCOUNT]      = {},
-                           rtOperationList[RT_MAXDEFAULTMESH_MESHCOUNT]          = {};
-std::vector<commandBundle_tgfxhnd> m_bundles[swapchainTextureCount];
-const rtMeshManagerType*           Mmt = {};
+std::vector<struct tgfx_commandBundle*> uploadBundleList   = {};
+struct tgfx_pipeline *                  meshRasterPipeline = {}, *meshComputePipeline = {};
+tgfx_bindingTableDescription            transformBindingDesc = {}, indirectDrawBindingTableDesc;
+struct tgfx_bindingTable *              transformBindingTables[swapchainTextureCount] = {},
+                         *indirectDrawBindingTable                                    = {},
+                         *vertexBufferBindingTables[swapchainTextureCount]            = {},
+                         *indexBufferBindingTables[swapchainTextureCount]             = {};
+indirectOperationType_tgfx rasterOperationList[RT_MAXDEFAULTMESH_MESHCOUNT]           = {},
+                           rtOperationList[RT_MAXDEFAULTMESH_MESHCOUNT]               = {};
+std::vector<struct tgfx_commandBundle*> m_bundles[swapchainTextureCount];
+const rtMeshManagerType*                Mmt = {};
 
 struct rtForwardMesh {
   uint32_t m_gpuVertexOffset = 0, m_gpuIndexOffset = 0;
@@ -59,9 +58,8 @@ struct rtForwardMesh {
 std::vector<rtForwardMesh*> meshes = {}, uploadQueue = {};
 
 const rtMeshManagerType* forwardMM_managerType() { return Mmt; }
-rtMesh* forwardMM_allocateMesh(uint32_t vertexCount, uint32_t indexCount,
-                                            void** meshData) {
-  uint32_t      maxVertexOffset = 0, maxIndexOffset = 0;
+rtMesh* forwardMM_allocateMesh(uint32_t vertexCount, uint32_t indexCount, void** meshData) {
+  uint32_t       maxVertexOffset = 0, maxIndexOffset = 0;
   rtForwardMesh* mesh = {};
   for (rtForwardMesh* searchMesh : meshes) {
     maxVertexOffset =
@@ -87,7 +85,7 @@ rtMesh* forwardMM_allocateMesh(uint32_t vertexCount, uint32_t indexCount,
   uint32_t stagingBufferSize =
     (mesh->m_vertexCount * sizeof(rtForwardVertex)) + (mesh->m_indexCount * sizeof(uint32_t));
   mesh->m_stagingBlock = rtRenderer::allocateMemoryBlock(bufferUsageMask_tgfx_COPYFROM,
-                                                         stagingBufferSize, rtMemoryRegion_UPLOAD);
+                                                         stagingBufferSize, rtMemoryRegionType_UPLOAD);
 
   // Can't use staging memory, keep it in RAM to upload later
   if (mesh->m_stagingBlock) {
@@ -110,36 +108,35 @@ unsigned char forwardMesh_uploadFnc(rtMesh* i_mesh) {
     return false;
   }
 
-  commandBundle_tgfxhnd copyBundle = renderer->beginCommandBundle(gpu, 2, nullptr, 0, nullptr);
-  renderer->cmdCopyBufferToBuffer(copyBundle, 0, mesh->m_vertexCount * sizeof(rtForwardVertex),
+  struct tgfx_commandBundle* copyBundle = tgfxRenderer->beginCommandBundle(gpu, 2, nullptr, 0, nullptr);
+  tgfxRenderer->cmdCopyBufferToBuffer(copyBundle, 0, mesh->m_vertexCount * sizeof(rtForwardVertex),
                                   rtRenderer::getBufferTgfxHnd(mesh->m_stagingBlock), 0,
                                   rtRenderer::getBufferTgfxHnd(gpuVertexBuffer),
                                   mesh->m_gpuVertexOffset * sizeof(rtForwardVertex));
-  renderer->cmdCopyBufferToBuffer(copyBundle, 1, mesh->m_indexCount * sizeof(uint32_t),
+  tgfxRenderer->cmdCopyBufferToBuffer(copyBundle, 1, mesh->m_indexCount * sizeof(uint32_t),
                                   rtRenderer::getBufferTgfxHnd(mesh->m_stagingBlock),
                                   mesh->m_vertexCount * sizeof(rtForwardVertex),
                                   rtRenderer::getBufferTgfxHnd(gpuIndexBuffer),
                                   mesh->m_gpuIndexOffset * sizeof(uint32_t));
-  renderer->finishCommandBundle(copyBundle, 0, nullptr);
+  tgfxRenderer->finishCommandBundle(copyBundle, 0, nullptr);
   uploadBundleList.push_back(copyBundle);
   return true;
 }
 unsigned char forwardMesh_destroyFnc(rtMesh* i_mesh) { return true; }
 
 struct renderList {
-  rtForwardMesh*        m_mesh;
-  std::vector<mat4_rt> m_transforms;
+  rtForwardMesh*       m_mesh;
+  std::vector<rtMat4> m_transforms;
 };
-commandBundle_tgfxhnd forwardMesh_renderFnc(unsigned int                           count,
-                                            const MM_renderInfo* const infos) {
-  uint32_t         frameIndx = rtRenderer::getFrameIndx();
-  struct rtShaderEffect*   se        = SEM_getSE(infos[0].sei);
-  pipeline_tgfxhnd pipe =
-    SSEM_getPipeline(( struct rtSurfaceShaderEffect* )se, Mmt);
+struct tgfx_commandBundle* forwardMesh_renderFnc(unsigned int               count,
+                                                 const MM_renderInfo* const infos) {
+  uint32_t               frameIndx = rtRenderer::getFrameIndx();
+  struct rtShaderEffect* se        = SEM_getSE(infos[0].sei);
+  struct tgfx_pipeline*  pipe      = SSEM_getPipeline(( struct rtSurfaceShaderEffect* )se, Mmt);
 
   if (m_bundles[frameIndx].size()) {
-    for (commandBundle_tgfxhnd bndle : m_bundles[frameIndx]) {
-      renderer->destroyCommandBundle(bndle);
+    for (struct tgfx_commandBundle* bndle : m_bundles[frameIndx]) {
+      tgfxRenderer->destroyCommandBundle(bndle);
     }
   }
 
@@ -152,41 +149,46 @@ commandBundle_tgfxhnd forwardMesh_renderFnc(unsigned int                        
     bool isFound = false;
     for (renderList& r : renders) {
       if (r.m_mesh == ( rtForwardMesh* )infos[infoIndx].mesh) {
-        r.m_transforms.push_back(*infos[infoIndx].transform);
-        isFound = true;
-        break;
+        for (uint32_t instanceIndx = 0; instanceIndx < infos[infoIndx].transformCount;
+             instanceIndx++) {
+          r.m_transforms.push_back(infos[infoIndx].transforms[instanceIndx]);
+          isFound = true;
+        }
+        if (isFound) {
+          break;
+        }
       }
     }
     if (!isFound) {
       renderList r = {};
       r.m_mesh     = ( rtForwardMesh* )infos[infoIndx].mesh;
-      r.m_transforms.push_back(*infos[infoIndx].transform);
+      r.m_transforms.push_back(*infos[infoIndx].transforms[instanceIndx]);
       renders.push_back(r);
     }
   }
 
   struct bindingTableUpdate {
     // Batched set infos
-    buffer_tgfxhnd batchBuffers[RT_MAXDEFAULTMESH_MESHCOUNT] = {};
-    uint32_t       batchIndices[RT_MAXDEFAULTMESH_MESHCOUNT] = {},
-             batchOffsets[RT_MAXDEFAULTMESH_MESHCOUNT]       = {},
-             batchSizes[RT_MAXDEFAULTMESH_MESHCOUNT]         = {};
+    struct tgfx_buffer* batchBuffers[RT_MAXDEFAULTMESH_MESHCOUNT] = {};
+    uint32_t            batchIndices[RT_MAXDEFAULTMESH_MESHCOUNT] = {},
+             batchOffsets[RT_MAXDEFAULTMESH_MESHCOUNT]            = {},
+             batchSizes[RT_MAXDEFAULTMESH_MESHCOUNT]              = {};
   };
   // Fill transform & draw indirect buffer & binding table
   {
-    uint32_t       transformIndx        = 0;
-    buffer_tgfxhnd transformsBufferTgfx = rtRenderer::getBufferTgfxHnd(transformsBuffer[frameIndx]);
-    glm::mat4*     transformsBufferMapped =
+    uint32_t            transformIndx = 0;
+    struct tgfx_buffer* transformsBufferTgfx =
+      rtRenderer::getBufferTgfxHnd(transformsBuffer[frameIndx]);
+    glm::mat4* transformsBufferMapped =
       ( glm::mat4* )rtRenderer::getBufferMappedMemPtr(transformsBuffer[frameIndx]);
-    tgfx_indirect_argument_draw_indexed* drawIndirectBufferMapped =
-      ( tgfx_indirect_argument_draw_indexed* )rtRenderer::getBufferMappedMemPtr(
-        gpuDrawIndirectBuffer);
+    tgfx_drawIndexedIndirectArgument* drawIndirectBufferMapped =
+      ( tgfx_drawIndexedIndirectArgument* )rtRenderer::getBufferMappedMemPtr(gpuDrawIndirectBuffer);
 
     bindingTableUpdate btUpdate;
 
     for (uint32_t rIndx = 0; rIndx < renders.size(); rIndx++) {
-      tgfx_indirect_argument_draw_indexed lastIndirectBuffer = {};
-      const renderList&                   r                  = renders[rIndx];
+      tgfx_drawIndexedIndirectArgument lastIndirectBuffer = {};
+      const renderList&                r                  = renders[rIndx];
 
       btUpdate.batchIndices[rIndx] = rIndx;
       btUpdate.batchBuffers[rIndx] = transformsBufferTgfx;
@@ -215,9 +217,9 @@ commandBundle_tgfxhnd forwardMesh_renderFnc(unsigned int                        
   }
   // Update vertex&index buffer binding tables
   {
-    bindingTableUpdate vbUpdate, ibUpdate;
-    buffer_tgfxhnd     vbTgfx = rtRenderer::getBufferTgfxHnd(gpuVertexBuffer),
-                   ibTgfx     = rtRenderer::getBufferTgfxHnd(gpuIndexBuffer);
+    bindingTableUpdate  vbUpdate, ibUpdate;
+    struct tgfx_buffer *vbTgfx = rtRenderer::getBufferTgfxHnd(gpuVertexBuffer),
+                       *ibTgfx = rtRenderer::getBufferTgfxHnd(gpuIndexBuffer);
 
     for (uint32_t rIndx = 0; rIndx < renders.size(); rIndx++) {
       const renderList& r = renders[rIndx];
@@ -255,34 +257,34 @@ commandBundle_tgfxhnd forwardMesh_renderFnc(unsigned int                        
   // indexed draw call
   static constexpr uint32_t cmdCount = 7;
 
-  commandBundle_tgfxhnd bundle =
-    renderer->beginCommandBundle(gpu, cmdCount, meshRasterPipeline, 0, nullptr);
-  uint32_t             cmdIndx          = 0;
-  bindingTable_tgfxhnd bindingTables[2] = {rtRenderer::getActiveCamBindingTable(),
-                                           transformBindingTables[frameIndx]};
-  renderer->cmdSetDepthBounds(bundle, cmdIndx++, 0.0f, 1.0f);
-  renderer->cmdSetScissor(bundle, cmdIndx++, {0, 0}, {1280, 720});
-  viewportInfo_tgfx viewport;
+  struct tgfx_commandBundle* bundle =
+    tgfxRenderer->beginCommandBundle(gpu, cmdCount, meshRasterPipeline, 0, nullptr);
+  uint32_t                  cmdIndx          = 0;
+  struct tgfx_bindingTable* bindingTables[2] = {rtRenderer::getActiveCamBindingTable(),
+                                                transformBindingTables[frameIndx]};
+  tgfxRenderer->cmdSetDepthBounds(bundle, cmdIndx++, 0.0f, 1.0f);
+  tgfxRenderer->cmdSetScissor(bundle, cmdIndx++, {0, 0}, {1280, 720});
+  tgfx_viewportInfo viewport;
   viewport.depthMinMax   = {0.0f, 1.0f};
   viewport.size          = {1280, 720};
   viewport.topLeftCorner = {0, 0};
-  renderer->cmdSetViewport(bundle, cmdIndx++, viewport);
-  renderer->cmdBindBindingTables(bundle, cmdIndx++, 0, 2, bindingTables, pipelineType_tgfx_RASTER);
-  uint64_t       offset         = 0;
-  buffer_tgfxhnd vertBuffer     = rtRenderer::getBufferTgfxHnd(gpuVertexBuffer),
-                 indxBuffer     = rtRenderer::getBufferTgfxHnd(gpuIndexBuffer),
-                 indirectBuffer = rtRenderer::getBufferTgfxHnd(gpuDrawIndirectBuffer);
-  renderer->cmdBindVertexBuffers(bundle, cmdIndx++, 0, 1, &vertBuffer, &offset);
-  renderer->cmdBindIndexBuffer(bundle, cmdIndx++, indxBuffer, 0, 4);
-  renderer->cmdExecuteIndirect(bundle, cmdIndx++, renders.size(), rasterOperationList,
+  tgfxRenderer->cmdSetViewport(bundle, cmdIndx++, viewport);
+  tgfxRenderer->cmdBindBindingTables(bundle, cmdIndx++, 0, 2, bindingTables, pipelineType_tgfx_RASTER);
+  uint64_t            offset         = 0;
+  struct tgfx_buffer *vertBuffer     = rtRenderer::getBufferTgfxHnd(gpuVertexBuffer),
+                     *indxBuffer     = rtRenderer::getBufferTgfxHnd(gpuIndexBuffer),
+                     *indirectBuffer = rtRenderer::getBufferTgfxHnd(gpuDrawIndirectBuffer);
+  tgfxRenderer->cmdBindVertexBuffers(bundle, cmdIndx++, 0, 1, &vertBuffer, &offset);
+  tgfxRenderer->cmdBindIndexBuffer(bundle, cmdIndx++, indxBuffer, 0, 4);
+  tgfxRenderer->cmdExecuteIndirect(bundle, cmdIndx++, renders.size(), rasterOperationList,
                                indirectBuffer, 0, 0, nullptr);
   assert(cmdIndx <= cmdCount && "Cmd count is exceeded!");
-  renderer->finishCommandBundle(bundle, 0, nullptr);
+  tgfxRenderer->finishCommandBundle(bundle, 0, nullptr);
   m_bundles[frameIndx].push_back(bundle);
   return bundle;
 }
 void forwardMesh_frameFnc() {
-  for (commandBundle_tgfxhnd bndl : uploadBundleList) {
+  for (struct tgfx_commandBundle* bndl : uploadBundleList) {
     rtRenderer::upload(bndl);
   }
 
@@ -290,7 +292,7 @@ void forwardMesh_frameFnc() {
 }
 
 rtMesh* forwardMesh_allocateFnc(uint32_t vertexCount, uint32_t indexCount, void* extraInfo,
-                               void** meshData) {
+                                void** meshData) {
   return forwardMM_allocateMesh(vertexCount, indexCount, meshData);
 }
 
@@ -303,12 +305,12 @@ static constexpr char
     "layout(location = 0) out vec4 outColor; void main() {outColor = surface_shading();}";
 static constexpr wchar_t* notSupportedSE =
   L"Surface SE isn't supported by the forward mesh manager";
-inline shaderSource_tgfxhnd compileFragmentShader(const char* shadingCode) {
+inline struct tgfx_shaderSource* compileFragmentShader(const char* shadingCode) {
   char* fragCode = nullptr;
   stringSys->createString(string_type_tapi_UTF8, ( void** )&fragCode,
                           L"#version 450\n%s\n%s\n%s\n%s", fragCode_load_TEXTCOORD0,
                           fragCode_load_NORMAL, shadingCode, fragCode_MAIN);
-  shaderSource_tgfxhnd fragmentShader = nullptr;
+  struct tgfx_shaderSource* fragmentShader = nullptr;
   contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
                                       shaderStage_tgfx_FRAGMENTSHADER, fragCode, strlen(fragCode),
                                       &fragmentShader);
@@ -316,10 +318,10 @@ inline shaderSource_tgfxhnd compileFragmentShader(const char* shadingCode) {
   return fragmentShader;
 }
 
-rasterStateDescription_tgfx     CONST_stateDesc = {};
-vertexAttributeDescription_tgfx CONST_attribs[attribCount];
-vertexBindingDescription_tgfx   CONST_bindings[1];
-shaderSource_tgfxhnd            firstVertShader;
+tgfx_rasterStateDescription     CONST_stateDesc = {};
+tgfx_vertexAttributeDescription CONST_attribs[attribCount];
+tgfx_vertexBindingDescription   CONST_bindings[1];
+struct tgfx_shaderSource*       firstVertShader;
 unsigned char                   forwardMesh_supportsSEfnc(struct rtSurfaceShaderEffect* se) {
 #define earlyExit()                                    \
   logSys->log(log_type_tapi_ERROR, 0, notSupportedSE); \
@@ -345,28 +347,28 @@ unsigned char                   forwardMesh_supportsSEfnc(struct rtSurfaceShader
     }
   }
 
-  shaderSource_tgfxhnd fragmentShader = compileFragmentShader(props.shading_code);
+  struct tgfx_shaderSource* fragmentShader = compileFragmentShader(props.shading_code);
   if (!fragmentShader) {
     earlyExit();
   }
 
-  pipeline_tgfxhnd pipe = nullptr;
+  struct tgfx_pipeline* pipe = nullptr;
   {
-    rasterPipelineDescription_tgfx pipeDesc = {};
+    tgfx_rasterPipelineDescription pipeDesc = {};
     pipeDesc.attribLayout.attribCount       = attribCount;
     pipeDesc.attribLayout.bindingCount      = 1;
     pipeDesc.attribLayout.i_attributes      = CONST_attribs;
     pipeDesc.attribLayout.i_bindings        = CONST_bindings;
     rtRenderer::getRTFormats(&pipeDesc);
-    pipeDesc.extCount               = 0;
-    pipeDesc.mainStates             = &CONST_stateDesc;
-    pipeDesc.shaderCount            = 2;
-    shaderSource_tgfxhnd shaders[2] = {firstVertShader, fragmentShader};
-    pipeDesc.shaders                = shaders;
+    pipeDesc.extCount                    = 0;
+    pipeDesc.mainStates                  = &CONST_stateDesc;
+    pipeDesc.shaderCount                 = 2;
+    struct tgfx_shaderSource* shaders[2] = {firstVertShader, fragmentShader};
+    pipeDesc.shaders                     = shaders;
 
-    bindingTableDescription_tgfx tables[32] = {};
+    tgfx_bindingTableDescription tables[32] = {};
     for (uint32_t i = 0; i < props.instanceInputCount && i < 16; i++) {
-      SEM_getBindingTableDesc((rtShaderEffect*)se, props.inputs[i], &tables[i]);
+      SEM_getBindingTableDesc(( rtShaderEffect* )se, props.instanceInputs[i], &tables[i]);
     }
     pipeDesc.tableCount = props.instanceInputCount;
     pipeDesc.tables     = tables;
@@ -394,27 +396,26 @@ void forwardMM_initializeManager() {
   gpuVertexBuffer = rtRenderer::allocateMemoryBlock(bufferUsageMask_tgfx_COPYTO |
                                                       bufferUsageMask_tgfx_VERTEXBUFFER |
                                                       bufferUsageMask_tgfx_STORAGEBUFFER,
-                                                    16ull << 20, rtMemoryRegion_LOCAL);
+                                                    16ull << 20, rtMemoryRegionType_LOCAL);
 
   gpuIndexBuffer =
     rtRenderer::allocateMemoryBlock(bufferUsageMask_tgfx_COPYTO | bufferUsageMask_tgfx_INDEXBUFFER |
                                       bufferUsageMask_tgfx_STORAGEBUFFER,
-                                    16ull << 20, rtMemoryRegion_LOCAL);
+                                    16ull << 20, rtMemoryRegionType_LOCAL);
 
   gpuDrawIndirectBuffer = rtRenderer::allocateMemoryBlock(
     bufferUsageMask_tgfx_COPYTO | bufferUsageMask_tgfx_INDIRECTBUFFER |
       bufferUsageMask_tgfx_STORAGEBUFFER,
-    RT_MAXDEFAULTMESH_MESHCOUNT * sizeof(tgfx_indirect_argument_draw_indexed),
-    rtMemoryRegion_UPLOAD);
+    RT_MAXDEFAULTMESH_MESHCOUNT * sizeof(tgfx_drawIndexedIndirectArgument), rtMemoryRegionType_UPLOAD);
 
   gpuComputeIndirectBuffer = rtRenderer::allocateMemoryBlock(
     bufferUsageMask_tgfx_COPYTO | bufferUsageMask_tgfx_INDIRECTBUFFER,
-    RT_MAXDEFAULTMESH_MESHCOUNT * sizeof(tgfx_indirect_argument_dispatch), rtMemoryRegion_UPLOAD);
+    RT_MAXDEFAULTMESH_MESHCOUNT * sizeof(tgfx_dispatchIndirectArgument), rtMemoryRegionType_UPLOAD);
 
   for (uint32_t i = 0; i < swapchainTextureCount; i++) {
     transformsBuffer[i] = rtRenderer::allocateMemoryBlock(
       bufferUsageMask_tgfx_COPYTO | bufferUsageMask_tgfx_STORAGEBUFFER, RT_MAXTRANSFORMBUFFER_SIZE,
-      rtMemoryRegion_UPLOAD);
+      rtMemoryRegionType_UPLOAD);
   }
 
   // Compile vertex shader
@@ -444,8 +445,9 @@ void forwardMM_initializeManager() {
     indirectDrawBindingTableDesc.visibleStagesMask  = shaderStage_tgfx_COMPUTESHADER;
     contentManager->createBindingTable(gpu, &indirectDrawBindingTableDesc,
                                        &indirectDrawBindingTable);
-    uint32_t       bindingIndx            = 0;
-    buffer_tgfxhnd drawIndirectBufferTgfx = rtRenderer::getBufferTgfxHnd(gpuDrawIndirectBuffer);
+    uint32_t            bindingIndx = 0;
+    struct tgfx_buffer* drawIndirectBufferTgfx =
+      rtRenderer::getBufferTgfxHnd(gpuDrawIndirectBuffer);
     contentManager->setBindingTable_Buffer(indirectDrawBindingTable, 1, &bindingIndx,
                                            &drawIndirectBufferTgfx, &bindingIndx, nullptr, 0,
                                            nullptr);
@@ -455,12 +457,12 @@ void forwardMM_initializeManager() {
   {
     const char* shaderText = ( const char* )fileSys->read_textfile(
       string_type_tapi_UTF8, SOURCE_DIR "Content/firstComputeShader.comp", string_type_tapi_UTF8);
-    shaderSource_tgfxhnd firstComputeShader = nullptr;
+    struct tgfx_shaderSource* firstComputeShader = nullptr;
     contentManager->compileShaderSource(gpu, shaderlanguages_tgfx_GLSL,
                                         shaderStage_tgfx_COMPUTESHADER, ( void* )shaderText,
                                         strlen(shaderText), &firstComputeShader);
 
-    bindingTableDescription_tgfx computeBTs[6] = {*rtRenderer::getSwapchainStorageBindingDesc(),
+    tgfx_bindingTableDescription computeBTs[6] = {*rtRenderer::getSwapchainStorageBindingDesc(),
                                                   *rtRenderer::getCamBindingDesc(),
                                                   transformBindingDesc,
                                                   indirectDrawBindingTableDesc,

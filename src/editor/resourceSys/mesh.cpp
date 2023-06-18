@@ -13,8 +13,8 @@
 #include "resourceManager.h"
 #include "../editor_includes.h"
 #include "mesh.h"
-static unsigned char                    deserializeMesh(const rtResourceDesc* desc) { return false; }
-static unsigned char                    isMeshValid(void* dataHnd) { return false; }
+static unsigned char            deserializeMesh(const rtResourceDesc* desc) { return false; }
+static unsigned char            isMeshValid(void* dataHnd) { return false; }
 std::vector<rtMeshManagerType*> Mmts;
 struct rtMeshManagerType {
   MM_managerDesc desc;
@@ -36,7 +36,7 @@ meshRt_base* accessBaseMesh(struct rtMesh* m) {
 }
 
 rtMesh* MM_allocateMesh(const struct rtMeshManagerType* Mmt, uint32_t vertexCount,
-                                    uint32_t indexCount, void* extraInfo, void** meshData) {
+                        uint32_t indexCount, void* extraInfo, void** meshData) {
   return Mmt->desc.allocateMeshFnc(vertexCount, indexCount, extraInfo, meshData);
 }
 unsigned char MM_uploadMeshes(unsigned int count, rtMesh** meshes) {
@@ -51,9 +51,8 @@ unsigned char MM_uploadMeshes(unsigned int count, rtMesh** meshes) {
   }
   return (isAnySucceeded) ? (isAnyFailed + isAnySucceeded) : 0;
 }
-commandBundle_tgfxhnd* MM_renderMeshes(unsigned int            count,
-                                                    const MM_renderInfo* const infos,
-                                                    unsigned int*           cmdBndleCount) {
+struct tgfx_commandBundle** MM_renderMeshes(unsigned int count, const MM_renderInfo* const infos,
+                                            unsigned int* cmdBndleCount) {
   std::vector<std::vector<MM_renderInfo>> infoPerType(Mmts.size());
   for (uint32_t i = 0; i < count; i++) {
     auto base = accessBaseMesh(infos[i].mesh);
@@ -67,16 +66,16 @@ commandBundle_tgfxhnd* MM_renderMeshes(unsigned int            count,
   uint32_t validBundleCount = 0;
   for (uint32_t mmtIndx = 0; mmtIndx < infoPerType.size(); mmtIndx++) {
     rtMeshManagerType* manager  = Mmts[mmtIndx];
-    const auto&       infoList = infoPerType[mmtIndx];
+    const auto&        infoList = infoPerType[mmtIndx];
     if (!infoList.size()) {
       continue;
     }
     validBundleCount++;
   }
-  commandBundle_tgfxhnd* bundles = new commandBundle_tgfxhnd[validBundleCount];
+  struct tgfx_commandBundle** bundles = new struct tgfx_commandBundle*[validBundleCount];
   for (uint32_t mmtIndx = 0, bndleIndx = 0; mmtIndx < infoPerType.size(); mmtIndx++) {
     rtMeshManagerType* manager  = Mmts[mmtIndx];
-    const auto&       infoList = infoPerType[mmtIndx];
+    const auto&        infoList = infoPerType[mmtIndx];
     if (!infoList.size()) {
       continue;
     }
@@ -105,11 +104,11 @@ void MM_frame() {
 
 const rtMeshManagerType* MM_registerManager(MM_managerDesc desc) {
   rtMeshManagerType* Mmt = new rtMeshManagerType;
-  Mmt->desc             = desc;
+  Mmt->desc              = desc;
   Mmts.push_back(Mmt);
   return Mmt;
 }
-void MM_initializeManager() {
+void initializeMeshManager() {
   RM_managerDesc desc;
   desc.managerName = "Mesh Resource Manager";
   desc.managerVer  = MAKE_PLUGIN_VERSION_TAPI(0, 0, 0);
